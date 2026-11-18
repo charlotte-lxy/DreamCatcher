@@ -1,10 +1,19 @@
 {
-  "version": "0.2.1",
+  "version": "0.2.2",
   "date": "2026-11-18",
   "asar": "release/app.asar",
-  "sha256": "83805bd2d664268986a666c33e25ab41c23ad00a55c3e77c7bb95d1db3cafa6c",
-  "size": 118350,
+  "sha256": "584e805135b4fc995018c741bf509c87219b0cad149a4f9bef795203eade33ab",
+  "size": 119766,
   "releases": [
+    {
+      "version": "0.2.2",
+      "date": "2026-11-18",
+      "items": [
+        "修复更新安装时卡在 find/PID 可见终端窗口的问题",
+        "更新器改为隐藏的 VBS 脚本，不再启动 cmd/find 控制台",
+        "更新时强制结束旧进程，等待超时后自动放弃，避免永久卡住"
+      ]
+    },
     {
       "version": "0.2.1",
       "date": "2026-11-18",

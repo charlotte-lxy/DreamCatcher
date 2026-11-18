@@ -121,31 +121,54 @@ function sha256(buf) {
 
 function writeHelper(pid) {
   const appDir = path.dirname(process.execPath)
-  const helperPath = path.join(appDir, 'apply-update.cmd')
+  const helperPath = path.join(appDir, 'apply-update.vbs')
   const lines = [
-    '@echo off',
-    'setlocal EnableDelayedExpansion',
-    'set "APP=%~dp0"',
-    ':wait',
-    `tasklist /FI "PID eq ${pid}" 2>nul | find "${pid}" >nul`,
-    'if not errorlevel 1 (',
-    '  ping -n 2 127.0.0.1 >nul',
-    '  goto wait',
-    ')',
-    'set /a tries=0',
-    ':apply',
-    'set /a tries+=1',
-    'copy /Y "%APP%resources\\app.asar" "%APP%resources\\app.asar.bak" >nul 2>&1',
-    'move /Y "%APP%resources\\app.asar.new" "%APP%resources\\app.asar" >nul 2>&1',
-    'if errorlevel 1 (',
-    '  if !tries! LSS 20 (',
-    '    ping -n 2 127.0.0.1 >nul',
-    '    goto apply',
-    '  )',
-    ')',
-    'start "" "%APP%Dreamcatcher.exe"',
-    'del "%~f0" >nul 2>&1',
-    'endlocal'
+    'Option Explicit',
+    'Dim fso, sh, appDir, asarPath, newPath, bakPath, pid, i, replaced',
+    'Set fso = CreateObject("Scripting.FileSystemObject")',
+    'Set sh = CreateObject("WScript.Shell")',
+    'appDir = fso.GetParentFolderName(WScript.ScriptFullName)',
+    'asarPath = appDir & "\\resources\\app.asar"',
+    'newPath = appDir & "\\resources\\app.asar.new"',
+    'bakPath = appDir & "\\resources\\app.asar.bak"',
+    `pid = ${Number(pid) || 0}`,
+    'For i = 0 To 120',
+    '  If Not ProcessExists(pid) Then Exit For',
+    '  WScript.Sleep 500',
+    'Next',
+    'If ProcessExists(pid) Then WScript.Quit',
+    'replaced = False',
+    'For i = 0 To 20',
+    '  On Error Resume Next',
+    '  fso.CopyFile asarPath, bakPath, True',
+    '  Err.Clear',
+    '  fso.CopyFile newPath, asarPath, True',
+    '  If Err.Number = 0 Then',
+    '    replaced = True',
+    '    On Error GoTo 0',
+    '    Exit For',
+    '  End If',
+    '  Err.Clear',
+    '  On Error GoTo 0',
+    '  WScript.Sleep 500',
+    'Next',
+    'If replaced Then',
+    '  On Error Resume Next',
+    '  fso.DeleteFile newPath, True',
+    '  On Error GoTo 0',
+    'End If',
+    'sh.Run """" & appDir & "\\Dreamcatcher.exe""", 1, False',
+    'On Error Resume Next',
+    'fso.DeleteFile WScript.ScriptFullName, True',
+    'Function ProcessExists(p)',
+    '  Dim svc, col',
+    '  ProcessExists = False',
+    '  On Error Resume Next',
+    '  Set svc = GetObject("winmgmts:\\\\.\\root\\cimv2")',
+    '  Set col = svc.ExecQuery("SELECT ProcessId FROM Win32_Process WHERE ProcessId=" & p)',
+    '  If Not col Is Nothing Then ProcessExists = (col.Count > 0)',
+    '  On Error GoTo 0',
+    'End Function'
   ]
   fs.writeFileSync(helperPath, lines.join('\r\n') + '\r\n', 'utf8')
   return helperPath
@@ -181,8 +204,12 @@ async function installUpdate() {
   const newPath = asarPath + '.new'
   fs.writeFileSync(newPath, buf)
   const helperPath = writeHelper(process.pid)
-  spawn('cmd.exe', ['/c', helperPath], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
-  setTimeout(() => app.quit(), 400)
+  spawn('wscript.exe', [helperPath], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
+  setTimeout(() => {
+    try { app.quit() } catch (_) { /* ignore */ }
+    // app.quit 会触发 cookie flush，若被卡住则强制结束，避免更新器一直等 PID
+    setTimeout(() => { try { app.exit(0) } catch (_) { /* ignore */ } }, 1500)
+  }, 300)
   return { ok: true, version: lastState.remoteVersion }
 }
 

@@ -1,10 +1,18 @@
 {
-  "version": "0.2.3",
+  "version": "0.2.4",
   "date": "2026-11-18",
   "asar": "release/app.asar",
-  "sha256": "0be46504aa57e2eca4adad319532a72536bde4155a8f9c1638464ae0382ff4cb",
-  "size": 127151,
+  "sha256": "cd740224b8abe82ceffe6b26444bc5f99ca759c5f45f9240393a118283f331b2",
+  "size": 127031,
   "releases": [
+    {
+      "version": "0.2.4",
+      "date": "2026-11-18",
+      "items": [
+        "顶栏名称由 Dreamcatcher 改为「捕梦网」",
+        "顶栏的模块标签改为显示当前版本号"
+      ]
+    },
     {
       "version": "0.2.3",
       "date": "2026-11-18",

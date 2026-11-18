@@ -102,7 +102,7 @@ function createWindow() {
     minWidth: 760,
     minHeight: 620,
     backgroundColor: '#14161a',
-    title: 'Dreamcatcher',
+    title: '捕梦网',
     icon: path.join(ROOT, 'renderer', 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: {

@@ -77,8 +77,6 @@ const SUBBARS = {
     ]
   }
 }
-const MODULE_LABELS = { acquire: '资源获取', library: '资源管理', settings: '设置' }
-
 function switchModule(name) {
   currentModule = name
   for (const btn of document.querySelectorAll('.rail-btn')) {
@@ -87,8 +85,6 @@ function switchModule(name) {
   for (const page of document.querySelectorAll('.page')) {
     page.classList.toggle('active', page.id === 'page-' + name)
   }
-  const chip = $('topbarModule')
-  if (chip) chip.textContent = MODULE_LABELS[name] || ''
   renderSubbar()
   onSubChange()
 }
@@ -1183,4 +1179,7 @@ refreshAuth()
 loadSettings()
 loadHistory()
 renderSubbar()
-window.api.appVersion().then((v) => { $('ver').textContent = v }).catch(() => {})
+window.api.appVersion().then((v) => {
+  $('ver').textContent = v
+  $('topbarVersion').textContent = 'v' + v
+}).catch(() => { $('topbarVersion').textContent = 'v-' })

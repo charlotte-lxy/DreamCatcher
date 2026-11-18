@@ -1,6 +1,6 @@
 {
   "name": "dreamcatcher",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "Desktop video downloader with in-app login",
   "author": "Dreamcatcher",
@@ -9,7 +9,7 @@
     "start": "electron .",
     "selftest": "electron . --selftest",
     "test": "node --test test/core.test.js",
-    "build:launcher": "powershell -NoProfile -Command \"& 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe' -nologo -target:winexe -out:launcher\\Dreamcatcher.exe launcher\\launcher.cs -r:System.Windows.Forms.dll\"",
+    "build:launcher": "powershell -NoProfile -Command \"& 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe' -nologo -target:winexe -out:launcher\\Dreamcatcher.exe launcher\\launcher.cs -win32icon:build\\icon.ico -r:System.Windows.Forms.dll\"",
     "pack": "electron-builder --dir && node scripts/relabel-exes.js",
     "pack:zip": "electron-builder --win zip && node scripts/relabel-exes.js"
   },
@@ -47,7 +47,7 @@
     ],
     "win": {
       "executableName": "DreamcatcherApp",
-      "signAndEditExecutable": false
+      "icon": "build/icon.ico"
     }
   }
 }

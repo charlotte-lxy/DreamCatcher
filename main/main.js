@@ -103,6 +103,7 @@ function createWindow() {
     minHeight: 620,
     backgroundColor: '#14161a',
     title: 'Dreamcatcher',
+    icon: path.join(ROOT, 'renderer', 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(ROOT, 'preload', 'preload.js'),
@@ -530,6 +531,7 @@ app.on('before-quit', (e) => {
 app.on('window-all-closed', () => app.quit())
 
 app.whenReady().then(async () => {
+  app.setAppUserModelId('com.dreamcatcher.desktop')
   app.userAgentFallback = auth.UA
   registerIpc()
   await auth.applyProxy(settings)

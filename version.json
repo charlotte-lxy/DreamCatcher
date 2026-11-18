@@ -1,10 +1,19 @@
 {
-  "version": "0.2.2",
+  "version": "0.2.3",
   "date": "2026-11-18",
   "asar": "release/app.asar",
-  "sha256": "584e805135b4fc995018c741bf509c87219b0cad149a4f9bef795203eade33ab",
-  "size": 119766,
+  "sha256": "0be46504aa57e2eca4adad319532a72536bde4155a8f9c1638464ae0382ff4cb",
+  "size": 127151,
   "releases": [
+    {
+      "version": "0.2.3",
+      "date": "2026-11-18",
+      "items": [
+        "更换应用图标：窗口/任务栏、顶栏 Logo 与两个 exe 文件统一使用新图标",
+        "重新编译 DreamcatcherApp.exe 和启动器 Dreamcatcher.exe，嵌入新图标",
+        "修复顶栏图标被 CSP 拦截的问题"
+      ]
+    },
     {
       "version": "0.2.2",
       "date": "2026-11-18",

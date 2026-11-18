@@ -1,0 +1,566 @@
+'use strict'
+const { app, BrowserWindow, ipcMain, shell, net, dialog, clipboard } = require('electron')
+const { spawn } = require('child_process')
+const path = require('path')
+const fs = require('fs')
+const auth = require('./auth')
+const bili = require('./bilibili')
+const dl = require('./downloader')
+const updater = require('./updater')
+const proxy = require('./proxy')
+const store = require('./store')
+
+const ROOT = path.join(__dirname, '..')
+const IS_PACKAGED = app.isPackaged
+const EXE_DIR = path.dirname(process.execPath)
+// electron-builder 每次打包都会清空 win-unpacked，所以登录态和下载文件不能放在里面，
+// 统一放到 win-unpacked 的上一级目录，重新打包不会丢
+const STABLE_ROOT = IS_PACKAGED && path.basename(EXE_DIR).toLowerCase() === 'win-unpacked'
+  ? path.dirname(EXE_DIR)
+  : EXE_DIR
+const DATA_HOME = (() => {
+  const preferred = IS_PACKAGED ? path.join(STABLE_ROOT, 'data') : path.join(ROOT, '.tmp', 'data')
+  try {
+    fs.mkdirSync(preferred, { recursive: true })
+    const probe = path.join(preferred, '.wtest')
+    fs.writeFileSync(probe, 'ok')
+    fs.unlinkSync(probe)
+    return preferred
+  } catch (_) {
+    return app.getPath('userData')
+  }
+})()
+if (path.resolve(DATA_HOME) !== path.resolve(app.getPath('userData'))) app.setPath('userData', DATA_HOME)
+const DATA_ROOT = DATA_HOME
+// 受限环境（安全软件/受限令牌）下用户目录可能不可写，按可写性依次降级
+const LOG_DIR = (() => {
+  const candidates = [path.join(DATA_ROOT, 'logs'), path.join(EXE_DIR, 'logs')]
+  for (const dir of candidates) if (dl.ensureWritable(dir)) return dir
+  return candidates[0]
+})()
+const LOG_FILE = path.join(LOG_DIR, 'app.log')
+// 下载目录可能被系统重定向到不可写的盘符，失败就退回程序目录，绝不能在启动时崩
+const DOWNLOAD_DIR = (() => {
+  const candidates = IS_PACKAGED
+    ? [path.join(STABLE_ROOT, 'downloads'), path.join(app.getPath('downloads'), 'Dreamcatcher'), path.join(DATA_ROOT, 'downloads')]
+    : [path.join(ROOT, 'downloads')]
+  for (const dir of candidates) {
+    // 只建目录不够，还要真的能写（重定向的下载目录常常存在但无写入权限）
+    if (dl.ensureWritable(dir)) return dir
+  }
+  return app.getPath('temp')
+})()
+const COOKIE_DIR = path.join(dl.tmpDir(), 'cookies')
+try { fs.mkdirSync(LOG_DIR, { recursive: true }) } catch (_) { /* 日志目录不可写时退化为仅控制台输出 */ }
+try { fs.mkdirSync(COOKIE_DIR, { recursive: true }) } catch (_) { /* 由 exportCookies 再报具体错误 */ }
+
+let win = null
+let settings = store.read('settings.json', store.DEFAULTS)
+let history = store.readAny('tasks.json', []).map((t) => (t.status === 'running' ? Object.assign({}, t, { status: 'interrupted' }) : t))
+const HISTORY_LIMIT = 50
+const tasks = new Map()
+const queue = []
+let active = 0
+saveHistory()
+
+function log(...parts) {
+  const line = `[${new Date().toISOString()}] ${parts.join(' ')}`
+  console.log(line)
+  try { fs.appendFileSync(LOG_FILE, line + '\n') } catch (_) { /* 日志失败不影响主流程 */ }
+  if (win && !win.isDestroyed()) win.webContents.send('app:log', line)
+}
+
+function fmtSec(s) {
+  s = Math.round(s)
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const r = s % 60
+  return (h ? `${h}:` : '') + `${String(m).padStart(h ? 2 : 1, '0')}:${String(r).padStart(2, '0')}`
+}
+
+function saveHistory() {
+  store.write('tasks.json', history.slice(0, HISTORY_LIMIT))
+}
+
+function pushHistory(rec) {
+  history.unshift(rec)
+  history = history.slice(0, HISTORY_LIMIT)
+  saveHistory()
+}
+
+function updateHistory(id, patch) {
+  const i = history.findIndex((t) => t.id === id)
+  if (i === -1) return
+  history[i] = Object.assign({}, history[i], patch)
+  saveHistory()
+}
+
+function createWindow() {
+  win = new BrowserWindow({
+    width: 940,
+    height: 800,
+    minWidth: 760,
+    minHeight: 620,
+    backgroundColor: '#14161a',
+    title: 'Dreamcatcher',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(ROOT, 'preload', 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  })
+  win.loadFile(path.join(ROOT, 'renderer', 'index.html'))
+}
+
+async function proxyFor(url) {
+  // B 站直连：走境外代理既慢又容易触发风控
+  try {
+    if (/(^|\.)bilibili\.com$/i.test(new URL(url).hostname)) return null
+  } catch (_) { /* URL 不合法时交给 yt-dlp 报错 */ }
+  if (settings.proxyMode === 'direct') return null
+  if (settings.proxyMode === 'custom') return (settings.proxyUrl || '').trim() || null
+  return proxy.resolveProxy(url)
+}
+
+function formatFor(maxHeight, audioOnly) {
+  if (audioOnly) return 'ba/b'
+  if (!maxHeight) return 'bv*+ba/b'
+  // 末尾的 /bv*+ba/b 是兜底：某些视频没有低分辨率格式，不能直接失败
+  return `bv*[height<=${maxHeight}]+ba/b[height<=${maxHeight}]/bv*+ba/b`
+}
+
+const VIDEO_EXT = new Set(['.mp4', '.mkv', '.webm', '.flv', '.mov', '.ts', '.m4v'])
+const AUDIO_EXT = new Set(['.m4a', '.mp3', '.aac', '.flac', '.wav', '.ogg'])
+
+// 用户在设置里指定的目录优先；不可写时退回默认下载目录
+function effectiveDownloadDir() {
+  const custom = String(settings.downloadDir || '').trim()
+  if (custom && dl.ensureWritable(custom)) return custom
+  return DOWNLOAD_DIR
+}
+
+async function listMedia(root, filter) {
+  const out = []
+  async function walk(dir, depth) {
+    if (depth > 6 || out.length >= 3000) return
+    let entries
+    try {
+      entries = await fs.promises.readdir(dir, { withFileTypes: true })
+    } catch (_) {
+      return
+    }
+    for (const ent of entries) {
+      if (ent.name.startsWith('.')) continue
+      const full = path.join(dir, ent.name)
+      if (ent.isDirectory()) {
+        await walk(full, depth + 1)
+        continue
+      }
+      const ext = path.extname(ent.name).toLowerCase()
+      const type = VIDEO_EXT.has(ext) ? 'video' : AUDIO_EXT.has(ext) ? 'audio' : null
+      if (!type) continue
+      if (filter && filter !== 'all' && filter !== type) continue
+      try {
+        const st = await fs.promises.stat(full)
+        // 文件名以「UP名_YYYY-MM-DD_」开头；列表里只展示原视频名
+        let display = ent.name
+        const parent = path.basename(dir)
+        if (parent && display.startsWith(parent + '_')) {
+          const rest = display.slice(parent.length + 1)
+          const stripped = rest.replace(/^\d{4}-\d{2}-\d{2}_/, '')
+          if (stripped !== rest) display = stripped
+        }
+        out.push({ name: display, path: full, size: st.size, mtime: st.mtimeMs, type })
+      } catch (_) { /* 文件可能刚被删除 */ }
+    }
+  }
+  await walk(root, 0)
+  return out.sort((a, b) => b.mtime - a.mtime)
+}
+
+function pickMeta(info) {
+  return {
+    id: info.id,
+    title: info.title,
+    uploader: info.uploader,
+    duration: info.duration || 0,
+    thumbnail: info.thumbnail,
+    webpage_url: info.webpage_url,
+    formats: (info.formats || [])
+      .filter((f) => f.vcodec !== 'none' || f.acodec !== 'none')
+      .map((f) => ({
+        format_id: f.format_id,
+        height: f.height || 0,
+        ext: f.ext,
+        vcodec: f.vcodec || '',
+        acodec: f.acodec || '',
+        tbr: f.tbr || 0,
+        filesize: f.filesize || 0,
+        note: f.format_note || ''
+      }))
+  }
+}
+
+async function makeCookieFile(id) {
+  const dest = path.join(COOKIE_DIR, `${id}.txt`)
+  const names = await auth.exportCookies(dest)
+  const hasSession = names.includes('SESSDATA')
+  log(`cookie 导出 ${names.length} 条 ${hasSession ? '(含 SESSDATA)' : '(未登录)'}`)
+  return dest
+}
+
+// 充电专属视频在无权益时只会给试看片段，提前提示比下完再发现更好
+async function checkUpower(url) {
+  const m = /(BV[0-9A-Za-z]+)/.exec(url)
+  if (!m) return false
+  try {
+    const res = await auth.getSession().fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${m[1]}`, {
+      headers: { Referer: 'https://www.bilibili.com/' },
+      credentials: 'include'
+    })
+    const j = await res.json()
+    return !!(j && j.data && j.data.is_upower_exclusive)
+  } catch (_) {
+    return false
+  }
+}
+
+// 并发上限 2 的简单队列，超出的任务在前端显示“排队中”
+function pump() {
+  const max = Math.max(1, Number(settings.concurrency) || 2)
+  while (active < max && queue.length) {
+    const job = queue.shift()
+    active++
+    Promise.resolve()
+      .then(job)
+      .catch((err) => log('队列任务异常:', err.message))
+      .finally(() => {
+        active--
+        pump()
+      })
+  }
+}
+
+async function timedFetch(fetchFn, url, timeoutMs) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  const t0 = Date.now()
+  try {
+    const r = await fetchFn(url, { signal: ctrl.signal, method: 'HEAD' })
+    return { ok: r.status < 500, ms: Date.now() - t0, status: r.status }
+  } catch (err) {
+    return { ok: false, ms: Date.now() - t0, error: err.name === 'AbortError' ? '超时' : err.message }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// 判断代理是否真的生效：B 站走登录会话（直连），YouTube 走系统代理
+async function testProxy() {
+  const bilibili = await timedFetch((u, o) => auth.getSession().fetch(u, o), 'https://api.bilibili.com/x/web-interface/nav', 8000)
+  const youtube = await timedFetch((u, o) => net.fetch(u, o), 'https://www.youtube.com', 8000)
+  const resolved = await proxy.resolveProxy('https://www.youtube.com')
+  log(`代理测试: bilibili=${bilibili.ok ? bilibili.ms + 'ms' : 'FAIL(' + (bilibili.error || bilibili.status) + ')'} youtube=${youtube.ok ? youtube.ms + 'ms' : 'FAIL(' + (youtube.error || youtube.status) + ')'} resolved=${resolved || 'direct'}`)
+  return { bilibili, youtube, resolved }
+}
+
+function registerIpc() {
+  ipcMain.handle('auth:status', () => auth.checkLogin())
+
+  ipcMain.handle('auth:open', async () => {
+    const st = await auth.openLogin(win)
+    log('登录窗口关闭:', JSON.stringify({ reason: st.reason, ok: st.ok, name: st.name }))
+    return st
+  })
+
+  ipcMain.handle('settings:get', () => settings)
+
+  ipcMain.handle('tasks:list', () => history)
+
+  ipcMain.handle('tasks:clear', () => {
+    history = history.filter((t) => t.status === 'running')
+    saveHistory()
+    log(`已清除下载记录，保留进行中 ${history.length} 条`)
+    return history
+  })
+
+  ipcMain.handle('files:list', async (_e, filter) => {
+    const root = effectiveDownloadDir()
+    return { root, files: await listMedia(root, filter) }
+  })
+
+  ipcMain.handle('files:trash', async (_e, p) => {
+    if (!p) return false
+    await shell.trashItem(p)
+    log('已移入回收站: ' + p)
+    return true
+  })
+
+  ipcMain.handle('dialog:pick-dir', async () => {
+    const r = await dialog.showOpenDialog(win, {
+      title: '选择下载目录',
+      properties: ['openDirectory', 'createDirectory'],
+      defaultPath: effectiveDownloadDir()
+    })
+    return r.canceled ? null : r.filePaths[0]
+  })
+
+  ipcMain.handle('app:version', () => app.getVersion())
+
+  ipcMain.handle('update:check', async () => {
+    try {
+      const st = await updater.checkForUpdate()
+      log(`检查更新: 本地 ${st.localVersion} 远端 ${st.remoteVersion}${st.updateAvailable ? ' 有更新' : ' 已最新'}`)
+      return st
+    } catch (err) {
+      log('检查更新失败: ' + err.message)
+      return { ok: false, error: err.message, localVersion: app.getVersion() }
+    }
+  })
+
+  ipcMain.handle('update:get', () => updater.getState())
+
+  ipcMain.handle('update:install', async () => {
+    try {
+      const r = await updater.installUpdate()
+      log(`开始安装更新 ${r.version}`)
+      return r
+    } catch (err) {
+      log('安装更新失败: ' + err.message)
+      throw err
+    }
+  })
+
+  ipcMain.handle('settings:set', async (_e, next) => {
+    const mode = ['system', 'direct', 'custom'].includes(next.proxyMode) ? next.proxyMode : 'system'
+    settings = Object.assign({}, settings, {
+      proxyMode: mode,
+      proxyUrl: String(next.proxyUrl || ''),
+      downloadDir: String(next.downloadDir || '')
+    })
+    store.write('settings.json', settings)
+    await auth.applyProxy(settings)
+    log(`设置已更新: proxyMode=${settings.proxyMode} proxyUrl=${settings.proxyUrl || '-'}`)
+    return settings
+  })
+
+  ipcMain.handle('video:probe', async (_e, url) => {
+    if (!/^https?:\/\//i.test(url || '')) throw new Error('链接格式不对，需要以 http(s):// 开头')
+    const cookieFile = await makeCookieFile('probe-' + Date.now().toString(36))
+    try {
+      const proxyUrl = await proxyFor(url)
+      const { info, warnings } = await dl.probe(url, { cookieFile, proxy: proxyUrl })
+      if (warnings.length) log(`解析警告: ${warnings.join(' | ')}`)
+      log(`解析成功: ${info.title} (proxy=${proxyUrl || 'direct'})`)
+      const meta = Object.assign(pickMeta(info), { warnings })
+      if (/bilibili\.com\/video\//i.test(url)) meta.upowerExclusive = await checkUpower(url)
+      return meta
+    } finally {
+      fs.rm(cookieFile, { force: true }, () => {})
+    }
+  })
+
+  ipcMain.handle('up:list', async (_e, url) => {
+    const r = await bili.listUpVideos(url, (p) => {
+      if (win && !win.isDestroyed()) win.webContents.send('up:progress', p)
+    })
+    log(`UP 列表: mid=${r.mid} 共 ${r.videos.length} 个视频`)
+    return r
+  })
+
+  ipcMain.handle('video:download', async (_e, payload) => {
+    const id = payload.id || Date.now().toString(36)
+    const state = { pid: 0, canceled: false }
+    tasks.set(id, state)
+    pushHistory({ id, url: payload.url, title: payload.title || payload.url, status: 'running', createdAt: Date.now() })
+    const cookieFile = await makeCookieFile(id)
+
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        fs.rm(cookieFile, { force: true }, () => {})
+        tasks.delete(id)
+      }
+      queue.push(async () => {
+        if (state.canceled) {
+          updateHistory(id, { status: 'canceled', finishedAt: Date.now() })
+          cleanup()
+          return resolve({ ok: true, canceled: true })
+        }
+        try {
+          const proxyUrl = await proxyFor(payload.url)
+          const format = formatFor(Number(payload.maxHeight) || 0, !!payload.audioOnly)
+          log(`开始下载 ${id}: ${payload.url} format=${format} proxy=${proxyUrl || 'direct'}`)
+          const res = await dl.start(
+            { id, url: payload.url, format, outDir: effectiveDownloadDir(), cookieFile, proxy: proxyUrl, state },
+            (ev) => {
+              if (ev.type === 'spawn') state.pid = ev.pid
+              if (ev.type === 'file') log(`下载完成 ${id}: ${ev.file}`)
+              if (win && !win.isDestroyed()) win.webContents.send('task:progress', Object.assign({ id }, ev))
+            }
+          )
+          // 没有权益时 yt-dlp 会把试看片段当成功下载，这里用时长兜底识别
+          let warning = ''
+          const expected = Number(payload.expectedDuration) || 0
+          if (res.file && expected > 0) {
+            const actual = await dl.probeDuration(res.file)
+            log(`时长探测 ${id}: expected=${expected} actual=${actual}`)
+            if (actual > 0 && actual < expected * 0.9) {
+              warning = `文件时长 ${fmtSec(actual)}，原视频 ${fmtSec(expected)}，可能是试看片段或下载不完整`
+              log(`时长校验未通过 ${id}: ${warning}`)
+              if (win && !win.isDestroyed()) win.webContents.send('task:progress', { id, type: 'warning', message: warning })
+            }
+          }
+          if (res.canceled) {
+            updateHistory(id, { status: 'canceled', finishedAt: Date.now() })
+          } else {
+            updateHistory(id, { status: 'done', file: res.file, warning, finishedAt: Date.now() })
+          }
+          resolve({ ok: true, file: res.file, canceled: !!res.canceled, warning })
+        } catch (err) {
+          log(`下载失败 ${id}: ${err.message}`)
+          updateHistory(id, { status: 'failed', error: err.message, finishedAt: Date.now() })
+          reject(new Error(err.message))
+        } finally {
+          cleanup()
+        }
+      })
+      pump()
+    })
+  })
+
+  ipcMain.handle('video:cancel', (_e, id) => {
+    const t = tasks.get(id)
+    if (!t) return false
+    t.canceled = true
+    if (t.pid) dl.cancel(t.pid)
+    log(`已请求取消 ${id}`)
+    return true
+  })
+
+  ipcMain.handle('proxy:test', () => testProxy())
+
+  ipcMain.handle('engine:update', async () => {
+    log('开始更新 yt-dlp…')
+    const r = await dl.updateEngine()
+    log('更新结果: ' + r.output.replace(/\s*\n\s*/g, ' | '))
+    return r
+  })
+
+  ipcMain.handle('shell:open-path', (_e, p) => {
+    if (p && fs.existsSync(p)) shell.showItemInFolder(p)
+    else shell.openPath(effectiveDownloadDir())
+    return true
+  })
+
+  // 直接 CreateProcess 拉起 explorer，绕开 ShellExecuteEx（受限令牌下它会弹“无法访问”对话框）
+  ipcMain.handle('shell:reveal', (_e, p) => {
+    return new Promise((resolve) => {
+      const exists = !!p && fs.existsSync(p)
+      const isFile = exists && fs.statSync(p).isFile()
+      const target = isFile ? p : effectiveDownloadDir()
+      const dir = isFile ? path.dirname(target) : target
+      // /select, 后面必须紧跟路径，且是同一个参数。
+      // 路径常带空格，必须自己加引号并关掉 Node 的自动转义，
+      // 否则 explorer 会把引号收在 /select, 外面，带空格的文件选不中。
+      const arg = isFile ? `/select,"${target}"` : `"${dir}"`
+      let settled = false
+      const done = (r) => {
+        if (settled) return
+        settled = true
+        resolve(r)
+      }
+      let child
+      try {
+        child = spawn('explorer.exe', [arg], {
+          detached: true,
+          stdio: 'ignore',
+          windowsVerbatimArguments: true
+        })
+      } catch (e) {
+        log('打开文件夹失败(抛出): ' + e.message)
+        return done({ ok: false, error: e.message, path: dir })
+      }
+      child.on('error', (e) => {
+        log('打开文件夹失败(进程): ' + e.message)
+        done({ ok: false, error: e.message, path: dir })
+      })
+      child.on('exit', (code) => {
+        log(`explorer 退出码 ${code} (${dir})`)
+        // explorer 把请求转交给已运行的资源管理器后通常以 1 退出，这是正常结果；
+        // 只有 0xC0000142（STATUS_DLL_INIT_FAILED）才表示进程根本没起来
+        if (code === 3221225794 || code === -1073741502) {
+          done({ ok: false, error: `explorer 退出码 ${code}（当前运行环境无法启动资源管理器）`, path: dir })
+        } else {
+          done({ ok: true, path: dir })
+        }
+      })
+      child.unref()
+      log('尝试打开: ' + dir + ' arg=' + arg)
+      setTimeout(() => done({ ok: true, path: dir }), 400)
+    })
+  })
+
+  ipcMain.handle('clipboard:write', (_e, text) => {
+    clipboard.writeText(String(text || ''))
+    return true
+  })
+}
+
+// 退出前强制把 Cookie 刷盘，否则进程被结束时登录态会丢
+let cookiesFlushed = false
+app.on('before-quit', (e) => {
+  if (cookiesFlushed) return
+  e.preventDefault()
+  auth.getSession().cookies.flushStore()
+    .catch(() => {})
+    .finally(() => {
+      cookiesFlushed = true
+      app.quit()
+    })
+})
+
+app.on('window-all-closed', () => app.quit())
+
+app.whenReady().then(async () => {
+  app.userAgentFallback = auth.UA
+  registerIpc()
+  await auth.applyProxy(settings)
+  if (process.argv.includes('--selftest')) return selftest()
+  createWindow()
+  updater.autoCheck(win, log)
+})
+
+// 无界面自检：只验证 cookie 导出与 yt-dlp 链路，不涉及登录
+async function selftest() {
+  const BV = 'https://www.bilibili.com/video/BV1kYsW6NE6E'
+  try {
+    log('=== SELFTEST START ===')
+    const w = new BrowserWindow({ show: false, webPreferences: { partition: auth.PARTITION } })
+    await w.loadURL('https://www.bilibili.com/')
+    await new Promise((r) => setTimeout(r, 5000))
+    log('login state:', JSON.stringify(await auth.checkLogin()))
+    const cookiePath = path.join(ROOT, '.tmp', 'selftest-cookies.txt')
+    const names = await auth.exportCookies(cookiePath)
+    log('cookies exported:', names.length, 'SESSDATA:', names.includes('SESSDATA'), 'exists:', fs.existsSync(cookiePath))
+    const { info } = await dl.probe(BV, { cookieFile: cookiePath })
+    const heights = [...new Set(info.formats.filter((f) => f.height).map((f) => f.height))].sort((a, b) => a - b)
+    log('probe ok:', info.title, '| formats:', info.formats.length, '| heights:', heights.join(','))
+    const outDir = path.join(ROOT, '.tmp', 'selftest-dl')
+    const res = await dl.start(
+      { id: 'selftest', url: BV, format: 'bv*[height<=360]+ba/b[height<=360]', outDir, cookieFile: cookiePath },
+      (ev) => {
+        if (ev.type === 'file') log('file:', ev.file)
+        if (ev.type === 'progress' && ev.percent > 0 && Math.floor(ev.percent) % 30 === 0) log('progress:', ev.percent.toFixed(0) + '%')
+      }
+    )
+    log('download result:', JSON.stringify(res))
+    log('=== SELFTEST OK ===')
+  } catch (err) {
+    log('=== SELFTEST FAILED ===', err.message)
+  } finally {
+    fs.rmSync(path.join(ROOT, '.tmp', 'selftest-cookies.txt'), { force: true })
+    app.quit()
+  }
+}

@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src https: http: data:; style-src 'self' 'unsafe-inline'" />
+  <title>Dreamcatcher</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-brand">
+      <span class="topbar-logo">DC</span>
+      <span class="topbar-name">Dreamcatcher</span>
+      <span id="topbarModule" class="topbar-chip">资源获取</span>
+    </div>
+    <div class="topbar-right">
+      <div id="topbarStatusBox" class="topbar-status">
+        <span class="topbar-dot"></span>
+        <span id="topbarStatus">就绪</span>
+      </div>
+      <span id="taskSpeed" class="topbar-speed hidden"></span>
+      <button id="taskToggle" class="topbar-task-btn" type="button">
+        <span class="topbar-task-ico">☰</span>
+        <span>任务列表</span>
+        <span id="taskCount" class="topbar-count hidden">0</span>
+      </button>
+    </div>
+  </header>
+
+  <aside class="rail">
+    <nav class="rail-items">
+      <button class="rail-btn active" data-module="acquire"><span class="ico">⇩</span><span>资源获取</span></button>
+      <button class="rail-btn" data-module="library"><span class="ico">▦</span><span>资源管理</span></button>
+    </nav>
+    <div class="rail-bottom">
+      <button class="rail-btn" data-module="settings"><span class="ico">⚙</span><span>设置</span></button>
+    </div>
+  </aside>
+
+  <div class="workspace">
+    <aside class="subbar hidden" id="subbar"></aside>
+    <main class="content">
+      <!-- 资源获取 -->
+      <section class="page active" id="page-acquire">
+        <h1 class="page-title">资源获取</h1>
+
+        <div class="panel" data-panel="single">
+          <div class="card">
+            <div class="row">
+              <input id="url" class="input" type="text" spellcheck="false"
+                     placeholder="粘贴视频链接，例如 https://www.bilibili.com/video/BV..." />
+              <button id="probeBtn" class="btn primary">解析</button>
+            </div>
+            <div id="status" class="status"></div>
+
+            <div id="meta" class="meta hidden">
+              <img id="cover" class="cover" alt="" referrerpolicy="no-referrer" />
+              <div class="meta-body">
+                <h2 id="title" class="title"></h2>
+                <div id="sub" class="sub"></div>
+                <div id="warn" class="warn hidden"></div>
+                <div class="row">
+                  <select id="format" class="select"></select>
+                  <button id="downloadBtn" class="btn primary">下载</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>日志</h3>
+            <pre id="log" class="log"></pre>
+          </div>
+        </div>
+
+        <div class="panel hidden" data-panel="up">
+          <div class="card">
+            <div class="row">
+              <input id="upUrl" class="input" type="text" spellcheck="false"
+                     placeholder="粘贴 UP 主空间链接，例如 https://space.bilibili.com/12345678/upload/video" />
+              <button id="upLoad" class="btn primary">获取列表</button>
+            </div>
+            <div id="upStatus" class="status"></div>
+            <div id="upProgress" class="up-progress hidden">
+              <div class="bar"><i id="upProgressFill"></i></div>
+              <span id="upProgressText">已获取 0 个视频</span>
+            </div>
+            <p class="hint">目前支持 B 站 UP 主空间，暂不支持 YouTube；列表只读取信息，勾选后点「批量下载」才会开始。</p>
+          </div>
+
+          <div id="upListWrap" class="card hidden">
+            <div class="up-toolbar">
+              <button id="upFilterBtn" class="btn ghost small up-filter-btn" type="button">筛选</button>
+              <span id="upSummary" class="muted"></span>
+              <span class="spacer"></span>
+              <span id="upSelected" class="up-selected">已选 0</span>
+              <button id="upSelectAll" class="btn ghost small">全选</button>
+              <button id="upSelectNone" class="btn ghost small">取消选择</button>
+              <button id="upDownload" class="btn primary small" disabled>批量下载</button>
+            </div>
+            <div id="upList" class="up-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 资源管理 -->
+      <section class="page" id="page-library">
+        <h1 class="page-title">资源管理 <span id="libSummary" class="title-sub"></span></h1>
+
+        <div class="card">
+          <div class="row">
+            <span id="libPath" class="muted ellipsis"></span>
+            <span class="spacer"></span>
+            <button id="libCopy" class="btn ghost small">复制目录</button>
+            <button id="libOpen" class="btn ghost small">打开目录</button>
+            <button id="libRefresh" class="btn ghost small">刷新</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div id="libList" class="files"><div class="empty">加载中…</div></div>
+        </div>
+      </section>
+
+      <!-- 设置 -->
+      <section class="page" id="page-settings">
+        <h1 class="page-title">设置</h1>
+
+        <div class="panel" data-panel="download">
+          <div class="card">
+            <h3>下载目录</h3>
+            <p class="muted">下载的视频会保存到这里，「资源管理」也扫描这个目录。</p>
+            <div class="row">
+              <input id="downloadDir" class="input" readonly placeholder="使用默认目录" />
+              <button id="pickDir" class="btn ghost">选择文件夹</button>
+            </div>
+            <div id="dirStatus" class="status"></div>
+          </div>
+        </div>
+
+        <div class="panel hidden" data-panel="account">
+          <div class="card">
+            <h3>账号管理</h3>
+            <p class="muted">下载充电视频需要登录有对应权益的 B 站账号。</p>
+            <div class="row">
+              <img id="avatar" class="avatar hidden" alt="" referrerpolicy="no-referrer" />
+              <span id="who" class="who">未登录</span>
+              <span class="spacer"></span>
+              <button id="loginBtn" class="btn primary">登录 B 站</button>
+            </div>
+            <p class="hint">登录态保存在程序目录的 data 文件夹，正常退出后不会丢失。</p>
+          </div>
+        </div>
+
+        <div class="panel hidden" data-panel="network">
+          <div class="card">
+            <h3>网络</h3>
+            <div class="row">
+              <select id="proxyMode" class="select">
+                <option value="system">跟随系统</option>
+                <option value="direct">直连</option>
+                <option value="custom">自定义</option>
+              </select>
+              <input id="proxyUrl" class="input" type="text" spellcheck="false"
+                     placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:7891" />
+            </div>
+            <div class="row">
+              <button id="saveProxy" class="btn primary small">保存</button>
+              <button id="testProxy" class="btn ghost small">测试连接</button>
+            </div>
+            <div id="netStatus" class="status"></div>
+            <p class="hint">TUN / 全局模式选「跟随系统」；只有客户端提供本地端口时才需要「自定义」。B 站固定直连。</p>
+          </div>
+        </div>
+
+        <div class="panel hidden" data-panel="update">
+          <div class="card">
+            <h3>版本与更新</h3>
+            <div class="row">
+              <span class="muted">当前版本 <b id="ver">-</b></span>
+              <span class="spacer"></span>
+              <button id="checkUpdate" class="btn primary small">检查更新</button>
+            </div>
+            <div id="updateStatus" class="status"></div>
+            <div id="updateNotes" class="update-notes hidden"></div>
+            <div id="updateActions" class="row hidden">
+              <button id="installUpdate" class="btn primary small">下载并安装更新</button>
+              <span id="updateHint" class="hint">更新会替换 app.asar 并自动重启应用</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>下载引擎</h3>
+            <div class="row">
+              <span class="muted">解析/下载失败时先更新 yt-dlp</span>
+              <span class="spacer"></span>
+              <button id="updateEngine" class="btn ghost small">更新下载引擎</button>
+            </div>
+            <p class="hint">站点改动频繁，更新下载引擎通常能修复解析问题。</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="updateToast" class="update-toast hidden">
+    <div class="update-toast-main">
+      <b>发现新版本</b>
+      <span id="updateToastVersion"></span>
+    </div>
+    <button id="updateToastView" class="btn primary small" type="button">查看</button>
+    <button id="updateToastClose" class="modal-close" type="button" aria-label="关闭">×</button>
+  </div>
+
+  <div id="filterModal" class="modal-mask hidden" role="dialog" aria-modal="true" aria-labelledby="filterTitle">
+    <div class="modal filter-modal">
+      <div class="modal-head">
+        <h2 id="filterTitle">筛选</h2>
+        <span class="modal-sub">按充电状态、上传月份、视频时长过滤</span>
+        <button id="filterClose" class="modal-close" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="filter-row">
+          <span class="filter-label">充电状态</span>
+          <div class="filter-choices">
+            <label><input type="radio" name="filterCharge" value="all" checked /> 全部</label>
+            <label><input type="radio" name="filterCharge" value="non" /> 非充电</label>
+            <label><input type="radio" name="filterCharge" value="charging" /> 充电</label>
+          </div>
+        </div>
+        <div class="filter-row">
+          <span class="filter-label">上传时间</span>
+          <div class="filter-inline">
+            <input id="filterStart" class="input filter-input" type="month" />
+            <span class="filter-sep">至</span>
+            <input id="filterEnd" class="input filter-input" type="month" />
+          </div>
+        </div>
+        <div class="filter-row">
+          <span class="filter-label">视频时长</span>
+          <div class="filter-inline">
+            <input id="filterMin" class="input filter-input" type="number" min="0" placeholder="最小" />
+            <span class="filter-sep">到</span>
+            <input id="filterMax" class="input filter-input" type="number" min="0" placeholder="最大" />
+            <span class="filter-unit">分钟</span>
+          </div>
+        </div>
+        <div id="filterError" class="status"></div>
+      </div>
+      <div class="modal-foot">
+        <button id="filterReset" class="btn ghost small" type="button">重置</button>
+        <span class="spacer"></span>
+        <button id="filterCancel" class="btn ghost small" type="button">取消</button>
+        <button id="filterApply" class="btn primary small" type="button">应用筛选</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="taskModal" class="modal-mask hidden" role="dialog" aria-modal="true" aria-labelledby="taskModalTitle">
+    <div class="modal">
+      <div class="modal-head">
+        <h2 id="taskModalTitle">任务列表</h2>
+        <span id="taskSummary" class="modal-sub">暂无任务</span>
+        <div class="modal-actions">
+          <button id="taskClear" class="btn ghost small" type="button">清除下载记录</button>
+          <button id="taskClose" class="modal-close" type="button" aria-label="关闭">×</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div id="tasks" class="tasks"><div class="empty">还没有任务</div></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

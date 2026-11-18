@@ -1,0 +1,10 @@
+node_modules/
+dist/
+logs/
+downloads/
+.tmp/
+bin/*.exe
+*.log
+release/*.bak
+release/*.new
+spike/

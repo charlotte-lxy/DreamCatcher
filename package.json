@@ -1,0 +1,53 @@
+{
+  "name": "dreamcatcher",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Desktop video downloader with in-app login",
+  "author": "Dreamcatcher",
+  "main": "main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "selftest": "electron . --selftest",
+    "test": "node --test test/core.test.js",
+    "build:launcher": "powershell -NoProfile -Command \"& 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe' -nologo -target:winexe -out:launcher\\Dreamcatcher.exe launcher\\launcher.cs -r:System.Windows.Forms.dll\"",
+    "pack": "electron-builder --dir && node scripts/relabel-exes.js",
+    "pack:zip": "electron-builder --win zip && node scripts/relabel-exes.js"
+  },
+  "devDependencies": {
+    "electron": "latest",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.dreamcatcher.desktop",
+    "productName": "Dreamcatcher",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main/**/*",
+      "preload/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "bin",
+        "to": "bin"
+      }
+    ],
+    "extraFiles": [
+      {
+        "from": "launcher/Dreamcatcher.exe",
+        "to": "Dreamcatcher.exe"
+      },
+      {
+        "from": "launcher/启动 Dreamcatcher.cmd",
+        "to": "启动 Dreamcatcher.cmd"
+      }
+    ],
+    "win": {
+      "executableName": "DreamcatcherApp",
+      "signAndEditExecutable": false
+    }
+  }
+}

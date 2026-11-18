@@ -2,6 +2,7 @@
 const $ = (id) => document.getElementById(id)
 const tasks = new Map()
 const taskSpeeds = new Map()
+let taskGroup = 0
 let currentMeta = null
 let settingsCache = {}
 let currentModule = 'acquire'
@@ -196,17 +197,54 @@ function setTaskInfo(ref, text) {
 }
 
 function updateTaskBadge() {
-  const n = tasks.size
+  const refs = [...tasks.values()]
+  const active = refs.filter((r) => r.live).length
   const badge = $('taskCount')
-  badge.textContent = String(n)
-  badge.classList.toggle('hidden', n === 0)
-  $('taskSummary').textContent = n ? `${n} 个任务` : '暂无任务'
+  badge.textContent = String(active)
+  badge.classList.toggle('hidden', active === 0)
+  $('taskSummary').textContent = active
+    ? `${active} 个进行中 · ${refs.length} 条记录`
+    : (refs.length ? `${refs.length} 条记录` : '暂无任务')
 }
 
 function updateTopbarStatus() {
-  const running = [...tasks.values()].some((r) => !r.bar.classList.contains('done') && !r.bar.classList.contains('fail'))
+  const running = [...tasks.values()].some((r) => r.live)
   $('topbarStatusBox').classList.toggle('busy', running)
   $('topbarStatus').textContent = running ? '下载中' : '就绪'
+}
+
+function updateOverallProgress() {
+  const refs = [...tasks.values()].filter((r) => r.session && r.group === taskGroup)
+  const box = $('taskOverall')
+  if (!refs.length) {
+    box.classList.add('hidden')
+    return
+  }
+  let sum = 0
+  let settled = 0
+  for (const r of refs) {
+    sum += Math.max(0, Math.min(100, Number(r.percent) || 0))
+    if (!r.live) settled++
+  }
+  const pct = Math.round(sum / refs.length)
+  box.classList.remove('hidden')
+  $('taskOverallFill').style.width = pct + '%'
+  $('taskOverallText').textContent = `${pct}% · ${settled}/${refs.length} 个完成`
+}
+
+function refreshTaskEmpty() {
+  const box = $('activeTasks')
+  const empty = box.querySelector('.empty')
+  if (tasks.size === 0) {
+    if (!empty) {
+      const el = document.createElement('div')
+      el.className = 'empty'
+      el.textContent = '还没有任务'
+      box.appendChild(el)
+    }
+  } else if (empty) {
+    empty.remove()
+  }
 }
 
 function renderTaskSpeed() {
@@ -224,10 +262,14 @@ function renderTaskSpeed() {
 
 function markTaskDone(ref, res) {
   ref.live = false
+  ref.percent = 100
   if (res.canceled) {
     ref.bar.classList.add('fail')
     ref.pct.textContent = '已取消'
     setTaskInfo(ref, '已取消')
+    updateTaskBadge()
+    updateOverallProgress()
+    updateTopbarStatus()
     return
   }
   ref.bar.classList.add('done')
@@ -237,14 +279,21 @@ function markTaskDone(ref, res) {
   ref.btn.textContent = '打开'
   ref.btn.dataset.act = 'open'
   ref.btn.dataset.path = res.file || ''
+  updateTaskBadge()
+  updateOverallProgress()
+  updateTopbarStatus()
 }
 
 function markTaskFailed(ref, err) {
   ref.live = false
+  ref.percent = 100
   ref.bar.classList.add('fail')
   ref.fill.style.width = '100%'
   ref.pct.textContent = '失败'
   setTaskInfo(ref, '失败：' + humanizeError(err.message))
+  updateTaskBadge()
+  updateOverallProgress()
+  updateTopbarStatus()
 }
 
 function openTaskModal() {
@@ -268,14 +317,9 @@ async function clearTaskHistory() {
       ref.el.remove()
       tasks.delete(id)
     }
-    const box = $('tasks')
-    if (!box.querySelector('.task') && !box.querySelector('.empty')) {
-      const empty = document.createElement('div')
-      empty.className = 'empty'
-      empty.textContent = '还没有任务'
-      box.appendChild(empty)
-    }
+    refreshTaskEmpty()
     updateTaskBadge()
+    updateOverallProgress()
     updateTopbarStatus()
   } catch (err) {
     window.alert('清除失败：' + humanizeError(err.message))
@@ -284,8 +328,8 @@ async function clearTaskHistory() {
   }
 }
 
-function addTask(id, title) {
-  const box = $('tasks')
+function addTask(id, title, history = false) {
+  const box = history ? $('tasks') : $('activeTasks')
   const empty = box.querySelector('.empty')
   if (empty) empty.remove()
 
@@ -300,8 +344,10 @@ function addTask(id, title) {
     <div class="bar"><i></i></div>
     <div class="task-info">排队中…</div>`
   el.querySelector('.task-title').textContent = title
-  box.prepend(el)
+  if (history) box.prepend(el)
+  else box.appendChild(el)
 
+  if (!history && ![...tasks.values()].some((r) => r.live)) taskGroup++
   const ref = {
     el,
     bar: el.querySelector('.bar'),
@@ -309,18 +355,24 @@ function addTask(id, title) {
     info: el.querySelector('.task-info'),
     pct: el.querySelector('.task-pct'),
     btn: el.querySelector('[data-act]'),
-    live: true
+    live: true,
+    session: !history,
+    group: history ? 0 : taskGroup,
+    percent: 0
   }
   tasks.set(id, ref)
+  refreshTaskEmpty()
   updateTaskBadge()
+  updateOverallProgress()
   updateTopbarStatus()
   return ref
 }
 
 function renderHistoryItem(t) {
-  const ref = addTask(t.id, t.title || t.url)
+  const ref = addTask(t.id, t.title || t.url, true)
   ref.live = false
   if (t.status === 'done' && t.file) {
+    ref.percent = 100
     ref.bar.classList.add('done')
     ref.fill.style.width = '100%'
     ref.pct.textContent = '100%'
@@ -329,11 +381,13 @@ function renderHistoryItem(t) {
     ref.btn.dataset.act = 'open'
     ref.btn.dataset.path = t.file
   } else if (t.status === 'failed') {
+    ref.percent = 100
     ref.bar.classList.add('fail')
     ref.fill.style.width = '100%'
     ref.pct.textContent = '失败'
     ref.info.textContent = '失败：' + humanizeError(t.error || '')
   } else if (t.status === 'canceled') {
+    ref.percent = 100
     ref.bar.classList.add('fail')
     ref.pct.textContent = '已取消'
     ref.info.textContent = '已取消'
@@ -346,6 +400,9 @@ function renderHistoryItem(t) {
     ref.btn.textContent = '记录'
     ref.btn.disabled = true
   }
+  updateTaskBadge()
+  updateOverallProgress()
+  updateTopbarStatus()
 }
 
 async function loadHistory() {
@@ -353,6 +410,9 @@ async function loadHistory() {
     const list = await window.api.listTasks()
     for (const t of list.slice().reverse().slice(-20)) renderHistoryItem(t)
   } catch (_) { /* 历史读不到不影响下载 */ } finally {
+    refreshTaskEmpty()
+    updateTaskBadge()
+    updateOverallProgress()
     updateTopbarStatus()
   }
 }
@@ -381,6 +441,8 @@ async function startDownload() {
     taskSpeeds.delete(id)
     renderTaskSpeed()
     $('downloadBtn').disabled = false
+    updateTaskBadge()
+    updateOverallProgress()
     updateTopbarStatus()
   }
 }
@@ -649,6 +711,8 @@ function startBatchDownload() {
       .finally(() => {
         taskSpeeds.delete(id)
         renderTaskSpeed()
+        updateTaskBadge()
+        updateOverallProgress()
         updateTopbarStatus()
       })
   }
@@ -876,6 +940,8 @@ async function loadSettings() {
     $('proxyMode').value = settingsCache.proxyMode || 'system'
     $('proxyUrl').value = settingsCache.proxyUrl || ''
     $('downloadDir').value = settingsCache.downloadDir || ''
+    $('maxConcurrent').value = settingsCache.concurrency || 2
+    $('maxSpeed').value = settingsCache.maxSpeed ? settingsCache.maxSpeed : ''
     syncProxyInput()
   } catch (_) { /* 读取失败沿用默认值 */ }
 }
@@ -937,7 +1003,7 @@ document.addEventListener('keydown', (e) => {
   else if (!$('taskModal').classList.contains('hidden')) closeTaskModal()
 })
 
-$('tasks').addEventListener('click', async (e) => {
+$('taskModal').addEventListener('click', async (e) => {
   const btn = e.target.closest('button')
   if (!btn) return
   const task = btn.closest('.task')
@@ -989,12 +1055,29 @@ $('pickDir').addEventListener('click', async () => {
 $('proxyMode').addEventListener('change', syncProxyInput)
 
 $('saveProxy').addEventListener('click', async () => {
+  const concurrency = Number($('maxConcurrent').value || 2)
+  const speedRaw = $('maxSpeed').value.trim()
+  const maxSpeed = speedRaw === '' ? 0 : Number(speedRaw)
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 10) {
+    $('netStatus').textContent = '最大并行下载需为 1–10 的整数'
+    $('netStatus').classList.remove('ok')
+    return
+  }
+  if (!Number.isFinite(maxSpeed) || maxSpeed < 0) {
+    $('netStatus').textContent = '下载限速需为非负数字，留空表示不限速'
+    $('netStatus').classList.remove('ok')
+    return
+  }
   $('saveProxy').disabled = true
   try {
     settingsCache = await window.api.setSettings(Object.assign({}, settingsCache, {
       proxyMode: $('proxyMode').value,
-      proxyUrl: $('proxyUrl').value.trim()
+      proxyUrl: $('proxyUrl').value.trim(),
+      concurrency,
+      maxSpeed
     }))
+    $('maxConcurrent').value = settingsCache.concurrency || 2
+    $('maxSpeed').value = settingsCache.maxSpeed ? settingsCache.maxSpeed : ''
     $('netStatus').textContent = '已保存'
     $('netStatus').classList.add('ok')
   } catch (err) {
@@ -1081,6 +1164,8 @@ window.api.onTask((ev) => {
     if (ev.eta) parts.push('剩余 ' + fmtDuration(ev.eta))
     setTaskInfo(ref, parts.join(' · '))
     ref.pct.textContent = Math.round(ev.percent) + '%'
+    ref.percent = Number(ev.percent) || 0
+    updateOverallProgress()
     if (ev.speed) taskSpeeds.set(ev.id, ev.speed)
     else taskSpeeds.delete(ev.id)
     renderTaskSpeed()

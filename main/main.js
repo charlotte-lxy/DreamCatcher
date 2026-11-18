@@ -335,14 +335,20 @@ function registerIpc() {
 
   ipcMain.handle('settings:set', async (_e, next) => {
     const mode = ['system', 'direct', 'custom'].includes(next.proxyMode) ? next.proxyMode : 'system'
+    const concRaw = next.concurrency == null ? settings.concurrency : next.concurrency
+    const speedRaw = next.maxSpeed == null ? settings.maxSpeed : next.maxSpeed
+    const concurrency = Math.max(1, Math.min(10, parseInt(concRaw, 10) || 2))
+    const maxSpeed = Math.max(0, Number(speedRaw) || 0)
     settings = Object.assign({}, settings, {
       proxyMode: mode,
       proxyUrl: String(next.proxyUrl || ''),
-      downloadDir: String(next.downloadDir || '')
+      downloadDir: String(next.downloadDir || ''),
+      concurrency,
+      maxSpeed
     })
     store.write('settings.json', settings)
     await auth.applyProxy(settings)
-    log(`设置已更新: proxyMode=${settings.proxyMode} proxyUrl=${settings.proxyUrl || '-'}`)
+    log(`设置已更新: proxyMode=${settings.proxyMode} proxyUrl=${settings.proxyUrl || '-'} concurrency=${settings.concurrency} maxSpeed=${settings.maxSpeed || '不限'}`)
     return settings
   })
 
@@ -393,7 +399,7 @@ function registerIpc() {
           const format = formatFor(Number(payload.maxHeight) || 0, !!payload.audioOnly)
           log(`开始下载 ${id}: ${payload.url} format=${format} proxy=${proxyUrl || 'direct'}`)
           const res = await dl.start(
-            { id, url: payload.url, format, outDir: effectiveDownloadDir(), cookieFile, proxy: proxyUrl, state },
+            { id, url: payload.url, format, outDir: effectiveDownloadDir(), cookieFile, proxy: proxyUrl, state, rateLimit: Number(settings.maxSpeed) || 0 },
             (ev) => {
               if (ev.type === 'spawn') state.pid = ev.pid
               if (ev.type === 'file') log(`下载完成 ${id}: ${ev.file}`)

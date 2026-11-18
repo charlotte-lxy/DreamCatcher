@@ -121,6 +121,8 @@ body {
   border: 1px solid #2c313a; background: #12141a; color: #e7e9ee; outline: none;
 }
 .input:focus { border-color: #7c5cff; }
+.input.short { flex: 0 0 120px; min-width: 0; }
+.field-label { color: #9aa1ad; font-size: 12px; white-space: nowrap; }
 .select { height: 38px; min-width: 140px; padding: 0 10px; border-radius: 9px; border: 1px solid #2c313a; background: #12141a; color: #e7e9ee; flex: none; }
 
 .btn {
@@ -151,6 +153,10 @@ body {
 .task-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
 .task-title { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-pct { flex: none; color: #8b929e; font-size: 12px; font-variant-numeric: tabular-nums; }
+.task-overall { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #24282f; }
+.task-overall-head { display: flex; justify-content: space-between; color: #8b929e; font-size: 12px; margin-bottom: 7px; }
+.task-overall .bar { margin-top: 0; height: 7px; }
+.task-history:not(:empty) { margin-top: 12px; padding-top: 12px; border-top: 1px solid #24282f; }
 .task-info { color: #8b929e; font-size: 12px; margin-top: 6px; }
 .bar { height: 6px; border-radius: 3px; background: #232830; overflow: hidden; margin-top: 9px; }
 .bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #7c5cff, #a78bfa); transition: width .25s; }

@@ -146,6 +146,7 @@ function buildDownloadArgs(o) {
   ].concat(ffmpegArgs(), runtimeArgs())
   if (o.cookieFile) args.push('--cookies', o.cookieFile)
   if (o.proxy) args.push('--proxy', o.proxy)
+  if (o.rateLimit) args.push('--limit-rate', `${Math.round(o.rateLimit)}K`)
   args.push(o.url)
   return args
 }

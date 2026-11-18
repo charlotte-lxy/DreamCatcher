@@ -93,4 +93,12 @@ test('store: 默认代理模式为 system', () => {
   const store = require('../main/store')
   assert.strictEqual(store.DEFAULTS.proxyMode, 'system')
   assert.strictEqual(store.DEFAULTS.concurrency, 2)
+  assert.strictEqual(store.DEFAULTS.maxSpeed, 0)
+})
+
+test('buildDownloadArgs: 限速参数', () => {
+  const args = dl.buildDownloadArgs({ url: BILI, outDir: 'D:\\out', rateLimit: 512 })
+  assert.strictEqual(args[args.indexOf('--limit-rate') + 1], '512K')
+  const noLimit = dl.buildDownloadArgs({ url: BILI, outDir: 'D:\\out' })
+  assert.ok(!noLimit.includes('--limit-rate'))
 })

@@ -7,7 +7,8 @@ const DEFAULTS = {
   proxyMode: 'system', // system | direct | custom
   proxyUrl: '',
   downloadDir: '',
-  concurrency: 2
+  concurrency: 2,
+  maxSpeed: 0 // KB/s，0 表示不限速
 }
 
 function baseDir() {

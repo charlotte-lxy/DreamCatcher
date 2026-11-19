@@ -1,10 +1,19 @@
 {
-  "version": "0.3.1",
+  "version": "0.3.2",
   "date": "2026-11-19",
   "asar": "release/app.asar",
-  "sha256": "c7d4d5de29d9505ac8e613f30c4cf213f3b00db0042604e37a45980158b76f55",
-  "size": 148065,
+  "sha256": "578dbd99f466f9485864ab9f38d06f51b3808b6d24e901dffc0ef2495a4c48b7",
+  "size": 150422,
   "releases": [
+    {
+      "version": "0.3.2",
+      "date": "2026-11-19",
+      "items": [
+        "修复下载时报 Permission denied：yt-dlp/ffmpeg 从工作区继承了 Low 完整性标签，无法写入普通下载目录",
+        "下载引擎改为先复制到用户目录再运行，已安装版本更新 app.asar 后也能自动生效",
+        "打包时一并修正 resources/bin 下 yt-dlp.exe、ffmpeg.exe 的完整性标签"
+      ]
+    },
     {
       "version": "0.3.1",
       "date": "2026-11-19",

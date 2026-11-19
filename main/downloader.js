@@ -17,6 +17,69 @@ const BIN_DIR = (() => {
 const BIN = path.join(BIN_DIR, 'yt-dlp.exe')
 const FFMPEG = path.join(BIN_DIR, 'ffmpeg.exe')
 
+let cachedEngineDir = null
+let enginePaths = null
+
+// DSH 工作区会被打上 Low 完整性标签，从中复制出来的 exe 也是 Low。
+// Low 进程无法写入普通下载目录，所以把引擎复制到用户目录后再运行；
+// 新复制的文件继承目标目录的普通完整性级别。
+function engineDir() {
+  if (cachedEngineDir) return cachedEngineDir
+  const candidates = [
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Dreamcatcher', 'engine') : null,
+    path.join(os.tmpdir(), 'Dreamcatcher-engine'),
+    path.join(tmpDir(), 'engine')
+  ].filter(Boolean)
+  for (const dir of candidates) {
+    if (ensureWritable(dir)) {
+      cachedEngineDir = dir
+      return dir
+    }
+  }
+  cachedEngineDir = candidates[0]
+  return cachedEngineDir
+}
+
+// 先写临时文件再改名：目标目录若已存在旧的 Low 文件，直接覆盖不会改变标签，
+// 重新创建后再替换才能拿到目标目录的完整性级别。
+async function seedEngineFile(src, name, dir) {
+  const dest = path.join(dir, name)
+  let tmp = null
+  try {
+    const source = await fs.promises.stat(src)
+    let current = null
+    try {
+      current = await fs.promises.stat(dest)
+    } catch (_) { /* 目标不存在，首次复制 */ }
+    // 目标比源新，说明用户已经用「更新下载引擎」更新过它，保留
+    if (current && current.mtimeMs > source.mtimeMs) return dest
+    if (current && current.size === source.size && current.mtimeMs >= source.mtimeMs) return dest
+    tmp = dest + '.new-' + process.pid + '-' + Date.now().toString(36)
+    await fs.promises.copyFile(src, tmp)
+    await fs.promises.rename(tmp, dest)
+    return dest
+  } catch (_) {
+    if (tmp) await fs.promises.rm(tmp, { force: true }).catch(() => {})
+    return src
+  }
+}
+
+async function ensureEngine() {
+  if (enginePaths) return
+  const dir = engineDir()
+  const bin = await seedEngineFile(BIN, 'yt-dlp.exe', dir)
+  const ffmpeg = await seedEngineFile(FFMPEG, 'ffmpeg.exe', dir)
+  enginePaths = { bin, ffmpeg }
+}
+
+function activeBin() {
+  return (enginePaths && enginePaths.bin) || BIN
+}
+
+function activeFfmpeg() {
+  return (enginePaths && enginePaths.ffmpeg) || FFMPEG
+}
+
 let cachedTmp = null
 function ensureWritable(dir) {
   try {
@@ -76,12 +139,14 @@ function runtimeArgs() {
 }
 
 function ffmpegArgs() {
-  return fs.existsSync(FFMPEG) ? ['--ffmpeg-location', FFMPEG] : []
+  const exe = activeFfmpeg()
+  return fs.existsSync(exe) ? ['--ffmpeg-location', exe] : []
 }
 
-function run(args, { onLine, onSpawn } = {}) {
+async function run(args, { onLine, onSpawn } = {}) {
+  await ensureEngine()
   return new Promise((resolve, reject) => {
-    const child = spawn(BIN, args, { windowsHide: true, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(activeBin(), args, { windowsHide: true, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
     let outBuf = ''
@@ -122,6 +187,7 @@ function buildProbeArgs(url, opts = {}) {
 }
 
 async function probe(url, opts = {}) {
+  await ensureEngine()
   const res = await run(buildProbeArgs(url, opts))
   if (res.code !== 0) throw new Error(lastError(res.stderr) || `yt-dlp exit ${res.code}`)
   const warnings = res.stderr
@@ -174,6 +240,7 @@ function parseProgress(line) {
 
 async function start(opts, onEvent) {
   fs.mkdirSync(opts.outDir, { recursive: true })
+  await ensureEngine()
   const state = opts.state || { canceled: false }
   let file = null
 
@@ -216,10 +283,12 @@ function cancel(pid) {
 }
 
 // 用 ffmpeg 读容器时长（ffmpeg -i 只打印信息、退出码非 0，属于正常现象）
-function probeDuration(file) {
+async function probeDuration(file) {
+  await ensureEngine()
   return new Promise((resolve) => {
-    if (!fs.existsSync(FFMPEG) || !fs.existsSync(file)) return resolve(0)
-    const child = spawn(FFMPEG, ['-hide_banner', '-i', file], { windowsHide: true, env: childEnv(), stdio: ['ignore', 'ignore', 'pipe'] })
+    const exe = activeFfmpeg()
+    if (!fs.existsSync(exe) || !fs.existsSync(file)) return resolve(0)
+    const child = spawn(exe, ['-hide_banner', '-i', file], { windowsHide: true, env: childEnv(), stdio: ['ignore', 'ignore', 'pipe'] })
     let err = ''
     child.stderr.on('data', (b) => { err += b.toString('utf8') })
     child.on('error', () => resolve(0))

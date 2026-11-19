@@ -10,14 +10,19 @@ const path = require('path')
 
 const ROOT = path.resolve(__dirname, '..')
 const APP_DIR = path.join(ROOT, 'dist', 'win-unpacked')
-const NAMES = ['Dreamcatcher.exe', 'DreamcatcherApp.exe']
+const NAMES = [
+  'Dreamcatcher.exe',
+  'DreamcatcherApp.exe',
+  path.join('resources', 'bin', 'yt-dlp.exe'),
+  path.join('resources', 'bin', 'ffmpeg.exe')
+]
 
 function main() {
   if (process.platform !== 'win32') return
 
   const present = NAMES.filter((name) => fs.existsSync(path.join(APP_DIR, name)))
   if (!present.length) {
-    console.log('[relabel] skip: dist/win-unpacked/*.exe not found')
+    console.log('[relabel] skip: packaged exes not found')
     return
   }
 
@@ -29,7 +34,7 @@ function main() {
     staging = fs.mkdtempSync(path.join(path.dirname(ROOT), 'dreamcatcher-label-'))
     for (const name of present) {
       const target = path.join(APP_DIR, name)
-      const copy = path.join(staging, name)
+      const copy = path.join(staging, path.basename(name))
       fs.copyFileSync(target, copy)
       fs.renameSync(copy, target)
       console.log('[relabel] ' + name + ' -> normal integrity')

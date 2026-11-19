@@ -77,11 +77,16 @@ renderer (无 Node 权限) ──IPC──> main
 并且不再把 explorer 正常的退出码 1 当成失败，带空格的文件名也会正确 `/select`。
 若仍提示无法打开：程序目录可能带「低完整性（Low）」标签（DSH `workspace-write` 沙箱
 会故意给工作区打这个标签）——从该目录启动的 Electron 也是 Low，Low 进程无法启动资源
-管理器。`npm run pack` / `pack:zip` 已自动调用 `scripts/relabel-exes.js` 修正两个 exe
-的标签；若打包是在沙箱内跑的，从普通终端再执行一次 `node scripts/relabel-exes.js`，
-或用管理员运行 `fix-integrity.cmd`。
+管理器。`npm run pack` / `pack:zip` 已自动调用 `scripts/relabel-exes.js` 修正应用 exe
+以及 `resources/bin` 下 yt-dlp/ffmpeg 的标签；若打包是在沙箱内跑的，从普通终端再执行一次
+`node scripts/relabel-exes.js`，或用管理员运行 `fix-integrity.cmd`。
 不建议把整个工作区改回 Medium：下一次 `workspace-write` 会话会把工作区重新标回 Low，
 而且会破坏沙箱对工作区的写入边界。
+
+**下载报 Permission denied / Errno 13**
+下载引擎（yt-dlp/ffmpeg）如果是从带 Low 完整性标签的工作区复制出来的，进程也会是 Low，
+无法写入普通下载目录。应用会先把引擎复制到 `%LOCALAPPDATA%\Dreamcatcher\engine` 再运行；
+更新到 v0.3.2 后重试即可。若仍失败，检查目标目录 ACL 或安全软件是否拦截。
 
 **解析/下载报 EPERM**
 配置目录不可写。应用会自动退到程序目录下的 `data\`、`downloads\`；若仍失败，

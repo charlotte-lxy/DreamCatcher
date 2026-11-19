@@ -142,6 +142,71 @@ test('scanLocalBvids: 递归扫描音视频，忽略非媒体与无 BV 号文件
   }
 })
 
+test('signedSearchUrl: 充电专属参数参与 WBI 签名', () => {
+  const bili = require('../main/bilibili')
+  const url = bili.signedSearchUrl('123', 2, 'mixin', 'charging')
+  assert.match(url, /[?&]special_type=charging/)
+  assert.match(url, /[?&]w_rid=[0-9a-f]{32}/)
+  assert.match(url, /[?&]pn=2/)
+  const normal = bili.signedSearchUrl('123', 1, 'mixin')
+  assert.ok(!normal.includes('special_type'), '默认列表不该带 special_type')
+})
+
+test('isChargingVideo: 合作视频不算充电，elec_arc_type 也算', () => {
+  const bili = require('../main/bilibili')
+  assert.strictEqual(bili.isChargingVideo({ is_charging_arc: true }), true)
+  assert.strictEqual(bili.isChargingVideo({ is_union_video: true }), false)
+  assert.strictEqual(bili.isChargingVideo({ elec_arc_type: 1 }), true)
+  assert.strictEqual(bili.isChargingVideo({ elec_arc_type: 2 }), true)
+  assert.strictEqual(bili.isChargingVideo({ elec_arc_type: 0 }), false)
+})
+
+test('listUpVideos: 默认列表与充电专属列表合并去重', async () => {
+  const auth = require('../main/auth')
+  const bili = require('../main/bilibili')
+  const original = auth.getSession
+  const calls = []
+  const video = (id, created, charging) => ({
+    bvid: id,
+    title: '视频 ' + id,
+    pic: '',
+    length: '01:00',
+    created,
+    author: '测试 UP',
+    is_charging_arc: charging
+  })
+  auth.getSession = () => ({
+    fetch: async (url) => {
+      calls.push(String(url))
+      if (url.includes('/x/web-interface/nav')) {
+        return { ok: true, json: async () => ({ code: 0, data: { wbi_img: { img_url: 'https://i0.hdslb.com/' + 'a'.repeat(32) + '.png', sub_url: 'https://i0.hdslb.com/' + 'b'.repeat(32) + '.png' } } }) }
+      }
+      const u = new URL(url)
+      const special = u.searchParams.get('special_type')
+      const pn = Number(u.searchParams.get('pn'))
+      let body
+      if (!special && pn === 1) {
+        body = { code: 0, data: { page: { count: 2 }, list: { slist: [{ special_type: 'charging', count: 2 }], vlist: [video('BV1xx411c7mD', 1, false), video('BV1yy411c7mE', 2, true)] } } }
+      } else if (special === 'charging' && pn === 1) {
+        body = { code: 0, data: { page: { count: 2 }, list: { vlist: [video('BV1yy411c7mE', 2, true), video('BV1zz411c7mF', 3, true)] } } }
+      } else {
+        body = { code: 0, data: { page: { count: 2 }, list: { vlist: [] } } }
+      }
+      return { ok: true, json: async () => body }
+    }
+  })
+  try {
+    const r = await bili.listUpVideos('https://space.bilibili.com/123', () => {})
+    assert.strictEqual(r.mid, '123')
+    assert.strictEqual(r.videos.length, 3, '两个列表中的重复 BV 号应合并')
+    assert.deepStrictEqual(r.videos.map((v) => v.id), ['BV1zz411c7mF', 'BV1yy411c7mE', 'BV1xx411c7mD'])
+    assert.strictEqual(r.videos.find((v) => v.id === 'BV1yy411c7mE').charging, true)
+    assert.ok(calls.some((u) => u.includes('special_type=charging')), '没有请求充电专属列表')
+  } finally {
+    auth.getSession = original
+  }
+})
+
 test('buildDownloadArgs: 限速参数', () => {
   const args = dl.buildDownloadArgs({ url: BILI, outDir: 'D:\\out', rateLimit: 512 })
   assert.strictEqual(args[args.indexOf('--limit-rate') + 1], '512K')

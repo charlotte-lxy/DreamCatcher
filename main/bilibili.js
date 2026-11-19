@@ -85,7 +85,7 @@ async function fetchJson(session, url, headers) {
   }
 }
 
-function signedSearchUrl(mid, page, mixin) {
+function signedSearchUrl(mid, page, mixin, specialType) {
   const params = {
     mid: String(mid),
     ps: String(PAGE_SIZE),
@@ -95,6 +95,8 @@ function signedSearchUrl(mid, page, mixin) {
     web_location: '1550101',
     wts: String(Math.floor(Date.now() / 1000))
   }
+  // 空间页「更多筛选 → 充电专属」走的就是这个参数，缺省时只返回非充电视频
+  if (specialType) params.special_type = String(specialType)
   const query = Object.keys(params).sort()
     .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(String(params[k]).replace(/[!'()*]/g, ''))}`)
     .join('&')
@@ -102,22 +104,19 @@ function signedSearchUrl(mid, page, mixin) {
   return `https://api.bilibili.com/x/space/wbi/arc/search?${query}&w_rid=${wRid}`
 }
 
-async function listUpVideos(input, onProgress) {
-  const mid = parseMid(input)
-  const session = auth.getSession()
-  const headers = headersFor()
+// is_union_video 是合作视频，不是充电；充电要认 is_charging_arc / elec_arc_type
+function isChargingVideo(v) {
+  return !!(v.is_charging_arc || v.elec_arc_badge || Number(v.elec_arc_type) > 0)
+}
 
-  const nav = await fetchJson(session, 'https://api.bilibili.com/x/web-interface/nav', headers)
-  if (!nav || nav.code !== 0 || !nav.data || !nav.data.wbi_img) {
-    throw new Error(`获取 B 站签名失败（${(nav && nav.code) || '未知'}）`)
-  }
-  const mixin = mixinKey(nav.data.wbi_img.img_url, nav.data.wbi_img.sub_url)
-
+// 按投稿时间倒序拉取某一种类型的全部视频；specialType 为空时是「全部类型」
+async function fetchVideoPages(session, headers, mid, mixin, specialType, onProgress) {
   const videos = []
   const seen = new Set()
   let total = 0
+  let slist = []
   for (let page = 1; page <= MAX_PAGES; page++) {
-    const j = await fetchJson(session, signedSearchUrl(mid, page, mixin), headers)
+    const j = await fetchJson(session, signedSearchUrl(mid, page, mixin, specialType), headers)
     if (!j || j.code !== 0) {
       const code = (j && j.code) || '未知'
       const msg = (j && j.message) || '未知错误'
@@ -128,6 +127,7 @@ async function listUpVideos(input, onProgress) {
       throw new Error(`B 站接口返回 ${code}：${msg}`)
     }
     const list = (j.data && j.data.list && j.data.list.vlist) || []
+    if (j.data && j.data.list && Array.isArray(j.data.list.slist)) slist = j.data.list.slist
     total = Number(j.data && j.data.page && j.data.page.count) || total
     for (const v of list) {
       const id = String(v.bvid || '')
@@ -141,13 +141,44 @@ async function listUpVideos(input, onProgress) {
         duration: parseLength(v.length),
         created: Number(v.created || 0) * 1000,
         author: String(v.author || ''),
-        charging: !!(v.is_charging_arc || v.is_union_video)
+        charging: isChargingVideo(v)
       })
     }
-    if (onProgress) onProgress({ mid, loaded: videos.length, total: total || videos.length })
+    if (onProgress) onProgress({ loaded: videos.length, total: total || videos.length, slist })
     if (!list.length || (total > 0 && videos.length >= total)) break
     if (page < MAX_PAGES) await sleep(PAGE_DELAY)
   }
+  return { videos, total, slist }
+}
+
+async function listUpVideos(input, onProgress) {
+  const mid = parseMid(input)
+  const session = auth.getSession()
+  const headers = headersFor()
+
+  const nav = await fetchJson(session, 'https://api.bilibili.com/x/web-interface/nav', headers)
+  if (!nav || nav.code !== 0 || !nav.data || !nav.data.wbi_img) {
+    throw new Error(`获取 B 站签名失败（${(nav && nav.code) || '未知'}）`)
+  }
+  const mixin = mixinKey(nav.data.wbi_img.img_url, nav.data.wbi_img.sub_url)
+
+  // 默认接口只返回非充电视频；空间页的充电筛选是额外传 special_type=charging
+  let chargeTotal = 0
+  const normal = await fetchVideoPages(session, headers, mid, mixin, '', (p) => {
+    const charge = (p.slist || []).find((it) => it && it.special_type === 'charging')
+    if (charge) chargeTotal = Number(charge.count) || 0
+    if (onProgress) onProgress({ mid, loaded: p.loaded, total: p.total + chargeTotal })
+  })
+
+  const charging = await fetchVideoPages(session, headers, mid, mixin, 'charging', (p) => {
+    if (onProgress) onProgress({ mid, loaded: normal.videos.length + p.loaded, total: normal.videos.length + p.total })
+  })
+
+  // 同一视频可能两边都返回，充电列表里的数据覆盖它，确保充电标记正确
+  const merged = new Map()
+  for (const v of normal.videos) merged.set(v.id, v)
+  for (const v of charging.videos) merged.set(v.id, v)
+  const videos = [...merged.values()].sort((a, b) => b.created - a.created)
 
   return {
     mid,
@@ -169,4 +200,4 @@ async function fetchUpProfile(mid) {
   return { name: String(card.name || '').trim(), face }
 }
 
-module.exports = { parseMid, parseLength, thumbUrl, listUpVideos, fetchUpProfile }
+module.exports = { parseMid, parseLength, thumbUrl, listUpVideos, fetchUpProfile, isChargingVideo, signedSearchUrl }

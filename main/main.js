@@ -9,6 +9,7 @@ const dl = require('./downloader')
 const updater = require('./updater')
 const proxy = require('./proxy')
 const store = require('./store')
+const subs = require('./subscription')
 
 const ROOT = path.join(__dirname, '..')
 const IS_PACKAGED = app.isPackaged
@@ -57,6 +58,7 @@ try { fs.mkdirSync(COOKIE_DIR, { recursive: true }) } catch (_) { /* 由 exportC
 let win = null
 let settings = store.read('settings.json', store.DEFAULTS)
 let history = store.readAny('tasks.json', []).map((t) => (t.status === 'running' ? Object.assign({}, t, { status: 'interrupted' }) : t))
+let subscriptions = store.readAny('subscriptions.json', []).filter((s) => s && typeof s.mid === 'string' && s.mid)
 const HISTORY_LIMIT = 50
 const tasks = new Map()
 const queue = []
@@ -80,6 +82,21 @@ function fmtSec(s) {
 
 function saveHistory() {
   store.write('tasks.json', history.slice(0, HISTORY_LIMIT))
+}
+
+function saveSubscriptions() {
+  store.write('subscriptions.json', subscriptions)
+}
+
+function sendSubProgress(p) {
+  if (win && !win.isDestroyed()) win.webContents.send('subs:progress', p)
+}
+
+// 拉取网页清单并和下载目录比对；订阅的添加与检查共用
+async function fetchComparison(url) {
+  const list = await bili.listUpVideos(url, sendSubProgress)
+  const local = await subs.scanLocalBvids(effectiveDownloadDir())
+  return { list, comparison: subs.buildComparison(list.videos, local) }
 }
 
 function pushHistory(rec) {
@@ -375,6 +392,73 @@ function registerIpc() {
     })
     log(`UP 列表: mid=${r.mid} 共 ${r.videos.length} 个视频`)
     return r
+  })
+
+  ipcMain.handle('subs:list', () => subscriptions)
+
+  ipcMain.handle('subs:add', async (_e, url) => {
+    const { list, comparison } = await fetchComparison(url)
+    let profile = { name: '', face: '' }
+    try {
+      profile = await bili.fetchUpProfile(list.mid)
+    } catch (err) {
+      log(`获取 UP 资料失败: ${err.message}`)
+    }
+    const name = profile.name || list.author || `UP ${list.mid}`
+    const rec = {
+      mid: list.mid,
+      name,
+      face: profile.face,
+      lastCheckAt: Date.now(),
+      lastCount: comparison.videos.length,
+      lastMissing: comparison.missing
+    }
+    const i = subscriptions.findIndex((s) => s.mid === list.mid)
+    if (i >= 0) {
+      subscriptions[i] = Object.assign({}, subscriptions[i], rec)
+    } else {
+      subscriptions.unshift(Object.assign({ addedAt: Date.now() }, rec))
+    }
+    saveSubscriptions()
+    log(`订阅 UP: mid=${list.mid} name=${name} 共 ${comparison.videos.length} 个，待下载 ${comparison.missing}`)
+    return Object.assign({ subscription: subscriptions.find((s) => s.mid === list.mid) }, comparison)
+  })
+
+  ipcMain.handle('subs:check', async (_e, mid) => {
+    const sub = subscriptions.find((s) => s.mid === String(mid))
+    if (!sub) throw new Error('订阅不存在，可能已被删除')
+    const { list, comparison } = await fetchComparison(`https://space.bilibili.com/${sub.mid}`)
+    sub.lastCheckAt = Date.now()
+    sub.lastCount = comparison.videos.length
+    sub.lastMissing = comparison.missing
+    if (!sub.name) sub.name = list.author || `UP ${sub.mid}`
+    saveSubscriptions()
+    log(`检查订阅: mid=${sub.mid} 共 ${comparison.videos.length} 个，待下载 ${comparison.missing}`)
+    return Object.assign({ subscription: sub }, comparison)
+  })
+
+  ipcMain.handle('subs:remove', (_e, mid) => {
+    subscriptions = subscriptions.filter((s) => s.mid !== String(mid))
+    saveSubscriptions()
+    log(`取消订阅: mid=${mid}`)
+    return subscriptions
+  })
+
+  // 下载完成后只重扫本地，不重复请求网页清单
+  ipcMain.handle('subs:compare', async (_e, payload) => {
+    const mid = String((payload && payload.mid) || '')
+    const ids = Array.isArray(payload && payload.ids) ? payload.ids.map(String) : []
+    const local = await subs.scanLocalBvids(effectiveDownloadDir())
+    const map = {}
+    for (const id of ids) if (local.has(id)) map[id] = local.get(id)
+    const downloaded = Object.keys(map).length
+    const sub = subscriptions.find((s) => s.mid === mid)
+    if (sub) {
+      sub.lastCount = ids.length
+      sub.lastMissing = ids.length - downloaded
+      saveSubscriptions()
+    }
+    return { map, subscription: sub || null, downloaded, missing: ids.length - downloaded }
   })
 
   ipcMain.handle('video:download', async (_e, payload) => {

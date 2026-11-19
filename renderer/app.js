@@ -6,7 +6,7 @@ let taskGroup = 0
 let currentMeta = null
 let settingsCache = {}
 let currentModule = 'acquire'
-const currentSub = { acquire: 'single', library: 'all', settings: 'download' }
+const currentSub = { acquire: 'single', subscribe: 'bili', library: 'all', settings: 'download' }
 
 /* ---------------- 通用 ---------------- */
 function fmtDuration(sec) {
@@ -57,6 +57,12 @@ const SUBBARS = {
     items: [
       { id: 'single', label: '单资源获取' },
       { id: 'up', label: 'UP 主资源获取' }
+    ]
+  },
+  subscribe: {
+    title: '订阅来源',
+    items: [
+      { id: 'bili', label: 'B 站 UP' }
     ]
   },
   library: {
@@ -121,6 +127,11 @@ function onSubChange() {
     for (const panel of document.querySelectorAll('#page-acquire .panel')) {
       panel.classList.toggle('hidden', panel.dataset.panel !== currentSub.acquire)
     }
+  } else if (currentModule === 'subscribe') {
+    for (const panel of document.querySelectorAll('#page-subscribe .panel')) {
+      panel.classList.toggle('hidden', panel.dataset.panel !== currentSub.subscribe)
+    }
+    loadSubscriptions()
   } else if (currentModule === 'settings') {
     for (const panel of document.querySelectorAll('#page-settings .panel')) {
       panel.classList.toggle('hidden', panel.dataset.panel !== currentSub.settings)
@@ -549,6 +560,68 @@ function updateUpSelection() {
   btn.disabled = n === 0
 }
 
+// UP 主列表和订阅比对清单共用一行视频的展示结构
+function createVideoRow(v, onChange) {
+  const row = document.createElement('div')
+  row.className = 'up-item' + (v.selected ? ' selected' : '')
+
+  const check = document.createElement('input')
+  check.type = 'checkbox'
+  check.className = 'up-check'
+  check.checked = !!v.selected
+  check.addEventListener('change', () => {
+    v.selected = check.checked
+    row.classList.toggle('selected', check.checked)
+    onChange()
+  })
+
+  const thumbWrap = document.createElement('div')
+  thumbWrap.className = 'up-thumb-wrap'
+  if (v.thumb) {
+    const img = document.createElement('img')
+    img.className = 'up-thumb'
+    img.loading = 'lazy'
+    img.referrerPolicy = 'no-referrer'
+    img.alt = ''
+    img.src = v.thumb
+    img.addEventListener('error', () => { img.style.visibility = 'hidden' })
+    thumbWrap.appendChild(img)
+  } else {
+    const ph = document.createElement('div')
+    ph.className = 'up-thumb up-thumb-empty'
+    ph.textContent = '无封面'
+    thumbWrap.appendChild(ph)
+  }
+  const dur = document.createElement('span')
+  dur.className = 'up-duration'
+  dur.textContent = v.duration ? fmtDuration(v.duration) : '—'
+  thumbWrap.appendChild(dur)
+
+  const main = document.createElement('div')
+  main.className = 'up-main'
+  const title = document.createElement('div')
+  title.className = 'up-title'
+  title.textContent = v.title || '(无标题)'
+  title.title = v.title || ''
+  const meta = document.createElement('div')
+  meta.className = 'up-meta'
+  const upTime = document.createElement('span')
+  upTime.textContent = v.created ? `上传于 ${fmtDate(v.created)}` : '上传时间未知'
+  const len = document.createElement('span')
+  len.textContent = v.duration ? `时长 ${fmtDuration(v.duration)}` : '时长未知'
+  meta.append(upTime, len)
+  if (v.charging) {
+    const charge = document.createElement('span')
+    charge.className = 'up-charge'
+    charge.textContent = '充电'
+    meta.appendChild(charge)
+  }
+  main.append(title, meta)
+
+  row.append(check, thumbWrap, main)
+  return row
+}
+
 function renderUpList() {
   const box = $('upList')
   box.innerHTML = ''
@@ -560,66 +633,7 @@ function renderUpList() {
     return
   }
   const frag = document.createDocumentFragment()
-  for (const v of upVisible) {
-    const row = document.createElement('div')
-    row.className = 'up-item' + (v.selected ? ' selected' : '')
-
-    const check = document.createElement('input')
-    check.type = 'checkbox'
-    check.className = 'up-check'
-    check.checked = !!v.selected
-    check.addEventListener('change', () => {
-      v.selected = check.checked
-      row.classList.toggle('selected', check.checked)
-      updateUpSelection()
-    })
-
-    const thumbWrap = document.createElement('div')
-    thumbWrap.className = 'up-thumb-wrap'
-    if (v.thumb) {
-      const img = document.createElement('img')
-      img.className = 'up-thumb'
-      img.loading = 'lazy'
-      img.referrerPolicy = 'no-referrer'
-      img.alt = ''
-      img.src = v.thumb
-      img.addEventListener('error', () => { img.style.visibility = 'hidden' })
-      thumbWrap.appendChild(img)
-    } else {
-      const ph = document.createElement('div')
-      ph.className = 'up-thumb up-thumb-empty'
-      ph.textContent = '无封面'
-      thumbWrap.appendChild(ph)
-    }
-    const dur = document.createElement('span')
-    dur.className = 'up-duration'
-    dur.textContent = v.duration ? fmtDuration(v.duration) : '—'
-    thumbWrap.appendChild(dur)
-
-    const main = document.createElement('div')
-    main.className = 'up-main'
-    const title = document.createElement('div')
-    title.className = 'up-title'
-    title.textContent = v.title || '(无标题)'
-    title.title = v.title || ''
-    const meta = document.createElement('div')
-    meta.className = 'up-meta'
-    const upTime = document.createElement('span')
-    upTime.textContent = v.created ? `上传于 ${fmtDate(v.created)}` : '上传时间未知'
-    const len = document.createElement('span')
-    len.textContent = v.duration ? `时长 ${fmtDuration(v.duration)}` : '时长未知'
-    meta.append(upTime, len)
-    if (v.charging) {
-      const charge = document.createElement('span')
-      charge.className = 'up-charge'
-      charge.textContent = '充电'
-      meta.appendChild(charge)
-    }
-    main.append(title, meta)
-
-    row.append(check, thumbWrap, main)
-    frag.appendChild(row)
-  }
+  for (const v of upVisible) frag.appendChild(createVideoRow(v, updateUpSelection))
   box.appendChild(frag)
   box.scrollTop = 0
 }
@@ -686,35 +700,303 @@ async function loadUpList() {
   }
 }
 
+function downloadVideoItem(v, prefix, index) {
+  const id = prefix + Date.now().toString(36) + '_' + index.toString(36) + Math.random().toString(36).slice(2, 5)
+  const ref = addTask(id, v.title || v.url)
+  taskSpeeds.delete(id)
+  return window.api.download({
+    id,
+    title: v.title || v.url,
+    url: v.url,
+    maxHeight: 0,
+    audioOnly: false,
+    expectedDuration: Number(v.duration) || 0
+  }).then((res) => markTaskDone(ref, res))
+    .catch((err) => markTaskFailed(ref, err))
+    .finally(() => {
+      taskSpeeds.delete(id)
+      renderTaskSpeed()
+      updateTaskBadge()
+      updateOverallProgress()
+      updateTopbarStatus()
+    })
+}
+
 function startBatchDownload() {
   const chosen = upVideos.filter((v) => v.selected)
   if (!chosen.length) return
   const count = chosen.length
-  for (let i = 0; i < chosen.length; i++) {
-    const v = chosen[i]
-    const id = 'b' + Date.now().toString(36) + '_' + i.toString(36) + Math.random().toString(36).slice(2, 5)
-    const ref = addTask(id, v.title || v.url)
-    taskSpeeds.delete(id)
-    window.api.download({
-      id,
-      title: v.title || v.url,
-      url: v.url,
-      maxHeight: 0,
-      audioOnly: false,
-      expectedDuration: Number(v.duration) || 0
-    }).then((res) => markTaskDone(ref, res))
-      .catch((err) => markTaskFailed(ref, err))
-      .finally(() => {
-        taskSpeeds.delete(id)
-        renderTaskSpeed()
-        updateTaskBadge()
-        updateOverallProgress()
-        updateTopbarStatus()
-      })
-  }
+  for (let i = 0; i < chosen.length; i++) downloadVideoItem(chosen[i], 'b', i)
   setUpSelection(false)
   $('upStatus').textContent = `已加入下载队列：${count} 个视频`
   $('upStatus').classList.add('ok')
+}
+
+/* ---------------- B 站 UP 订阅 ---------------- */
+let subsCache = []
+let subVideos = []
+let subCompare = null
+let subBusy = false
+
+function updateSubsCache(rec) {
+  if (!rec) return
+  const i = subsCache.findIndex((s) => s.mid === rec.mid)
+  if (i >= 0) subsCache[i] = rec
+  else subsCache.unshift(rec)
+}
+
+function renderSubscriptions() {
+  const box = $('subList')
+  box.innerHTML = ''
+  if (!subsCache.length) {
+    const empty = document.createElement('div')
+    empty.className = 'empty'
+    empty.textContent = '还没有订阅，先粘贴主页链接添加'
+    box.appendChild(empty)
+    return
+  }
+  for (const s of subsCache) {
+    const row = document.createElement('div')
+    row.className = 'sub-item'
+
+    const avatar = document.createElement('div')
+    avatar.className = 'sub-avatar'
+    const initial = String(s.name || '?').trim().slice(0, 1) || '?'
+    if (s.face) {
+      const img = document.createElement('img')
+      img.src = s.face
+      img.alt = ''
+      img.referrerPolicy = 'no-referrer'
+      img.addEventListener('error', () => {
+        img.remove()
+        avatar.textContent = initial
+      })
+      avatar.appendChild(img)
+    } else {
+      avatar.textContent = initial
+    }
+
+    const main = document.createElement('div')
+    main.className = 'sub-main'
+    const name = document.createElement('div')
+    name.className = 'sub-name'
+    name.textContent = s.name || `UP ${s.mid}`
+    name.title = s.name || ''
+    const meta = document.createElement('div')
+    meta.className = 'sub-meta'
+    const parts = [`UID ${s.mid}`]
+    if (s.lastCheckAt) {
+      parts.push(`共 ${Number(s.lastCount) || 0} 个`, `未下载 ${Number(s.lastMissing) || 0} 个`)
+      parts.push(`上次检查 ${fmtDate(s.lastCheckAt)}`)
+    } else {
+      parts.push('尚未检查')
+    }
+    meta.textContent = parts.join(' · ')
+    main.append(name, meta)
+
+    const actions = document.createElement('div')
+    actions.className = 'sub-actions'
+    const check = document.createElement('button')
+    check.className = 'btn ghost small sub-check'
+    check.textContent = '检查更新'
+    check.addEventListener('click', () => checkSubscription(s))
+    const del = document.createElement('button')
+    del.className = 'btn ghost small sub-remove'
+    del.textContent = '取消订阅'
+    del.addEventListener('click', () => removeSubscription(s))
+    actions.append(check, del)
+
+    row.append(avatar, main, actions)
+    box.appendChild(row)
+  }
+}
+
+function setSubBusy(busy) {
+  subBusy = busy
+  $('subAdd').disabled = busy
+  $('subAdd').textContent = busy ? '获取中…' : '添加订阅'
+  for (const btn of document.querySelectorAll('#subList .sub-check, #subList .sub-remove')) btn.disabled = busy
+}
+
+function showSubProgress(show) {
+  $('subProgress').classList.toggle('hidden', !show)
+  if (!show) {
+    $('subProgressFill').style.width = '0%'
+    return
+  }
+  $('subProgressFill').style.width = '0%'
+  $('subProgressText').textContent = '已获取 0 个视频'
+}
+
+async function loadSubscriptions() {
+  try {
+    subsCache = await window.api.listSubs()
+    renderSubscriptions()
+  } catch (err) {
+    $('subStatus').textContent = '读取订阅失败：' + humanizeError(err.message)
+  }
+}
+
+function updateSubSummary() {
+  const total = subVideos.length
+  const downloaded = subVideos.filter((v) => v.downloaded).length
+  $('subCompareSummary').textContent = `网页 ${total} 个 · 已下载 ${downloaded} 个 · 待下载 ${total - downloaded} 个`
+}
+
+function updateSubSelection() {
+  const n = subVideos.filter((v) => v.selected).length
+  $('subSelected').textContent = `已选 ${n}`
+  const btn = $('subDownload')
+  btn.textContent = n ? `批量下载 (${n})` : '批量下载'
+  btn.disabled = n === 0
+}
+
+function renderSubItems() {
+  const box = $('subItems')
+  box.innerHTML = ''
+  if (!subVideos.length) {
+    const empty = document.createElement('div')
+    empty.className = 'empty'
+    empty.textContent = '这个 UP 主没有可列出的视频'
+    box.appendChild(empty)
+    return
+  }
+  const frag = document.createDocumentFragment()
+  for (const v of subVideos) {
+    const row = createVideoRow(v, updateSubSelection)
+    if (v.downloaded) {
+      row.classList.add('downloaded')
+      const badge = document.createElement('span')
+      badge.className = 'up-downloaded'
+      badge.textContent = '已下载'
+      if (v.localPath) badge.title = v.localPath
+      row.querySelector('.up-meta').appendChild(badge)
+    }
+    frag.appendChild(row)
+  }
+  box.appendChild(frag)
+  box.scrollTop = 0
+}
+
+function showSubCompare(res) {
+  subCompare = res
+  subVideos = res.videos || []
+  $('subCompareWrap').classList.remove('hidden')
+  $('subCompareTitle').textContent = '比对清单 · ' + ((res.subscription && res.subscription.name) || 'UP')
+  updateSubSummary()
+  renderSubItems()
+  updateSubSelection()
+}
+
+function setSubSelection(missingOnly) {
+  for (const v of subVideos) v.selected = missingOnly ? !v.downloaded : false
+  renderSubItems()
+  updateSubSelection()
+}
+
+async function addSubscription() {
+  if (subBusy) return
+  const url = $('subUrl').value.trim()
+  if (!url) {
+    $('subStatus').textContent = '先粘贴 UP 主空间链接'
+    $('subStatus').classList.remove('ok')
+    return
+  }
+  setSubBusy(true)
+  $('subStatus').textContent = '正在获取网页清单并比对本地文件…'
+  $('subStatus').classList.remove('ok')
+  showSubProgress(true)
+  try {
+    const res = await window.api.addSub(url)
+    $('subUrl').value = ''
+    updateSubsCache(res.subscription)
+    renderSubscriptions()
+    showSubCompare(res)
+    $('subStatus').textContent = `订阅成功：共 ${res.videos.length} 个视频，已下载 ${res.downloaded} 个，待下载 ${res.missing} 个`
+    $('subStatus').classList.add('ok')
+  } catch (err) {
+    $('subStatus').textContent = '添加失败：' + humanizeError(err.message)
+    $('subStatus').classList.remove('ok')
+  } finally {
+    showSubProgress(false)
+    setSubBusy(false)
+  }
+}
+
+async function checkSubscription(s) {
+  if (subBusy) return
+  setSubBusy(true)
+  $('subStatus').textContent = `正在检查「${s.name}」…`
+  $('subStatus').classList.remove('ok')
+  showSubProgress(true)
+  try {
+    const res = await window.api.checkSub(s.mid)
+    updateSubsCache(res.subscription)
+    renderSubscriptions()
+    showSubCompare(res)
+    $('subStatus').textContent = `检查完成：已下载 ${res.downloaded} 个，待下载 ${res.missing} 个`
+    $('subStatus').classList.add('ok')
+  } catch (err) {
+    $('subStatus').textContent = '检查失败：' + humanizeError(err.message)
+    $('subStatus').classList.remove('ok')
+  } finally {
+    showSubProgress(false)
+    setSubBusy(false)
+  }
+}
+
+async function removeSubscription(s) {
+  if (subBusy) return
+  if (!window.confirm(`取消订阅「${s.name || s.mid}」？已下载的文件不会删除。`)) return
+  try {
+    subsCache = await window.api.removeSub(s.mid)
+    renderSubscriptions()
+    if (subCompare && subCompare.subscription && subCompare.subscription.mid === s.mid) {
+      subCompare = null
+      subVideos = []
+      $('subCompareWrap').classList.add('hidden')
+    }
+    $('subStatus').textContent = '已取消订阅'
+    $('subStatus').classList.add('ok')
+  } catch (err) {
+    $('subStatus').textContent = '取消订阅失败：' + humanizeError(err.message)
+    $('subStatus').classList.remove('ok')
+  }
+}
+
+async function refreshSubLocal(mid) {
+  if (!subCompare || !subCompare.subscription || subCompare.subscription.mid !== mid) return
+  try {
+    const r = await window.api.compareSub({ mid, ids: subVideos.map((v) => v.id) })
+    for (const v of subVideos) {
+      v.downloaded = !!r.map[v.id]
+      v.localPath = r.map[v.id] || ''
+      if (v.downloaded) v.selected = false
+    }
+    if (r.subscription) {
+      subCompare.subscription = r.subscription
+      updateSubsCache(r.subscription)
+      renderSubscriptions()
+    }
+    renderSubItems()
+    updateSubSummary()
+    updateSubSelection()
+  } catch (_) { /* 本地重扫失败不影响已完成的下载 */ }
+}
+
+function startSubDownload() {
+  if (!subCompare || !subCompare.subscription) return
+  const chosen = subVideos.filter((v) => v.selected)
+  if (!chosen.length) return
+  const mid = subCompare.subscription.mid
+  const count = chosen.length
+  const jobs = chosen.map((v, i) => downloadVideoItem(v, 's', i))
+  for (const v of chosen) v.selected = false
+  renderSubItems()
+  updateSubSelection()
+  $('subStatus').textContent = `已加入下载队列：${count} 个视频`
+  $('subStatus').classList.add('ok')
+  Promise.allSettled(jobs).then(() => refreshSubLocal(mid))
 }
 
 /* ---------------- 资源管理 ---------------- */
@@ -974,6 +1256,14 @@ $('upSelectAll').addEventListener('click', () => setUpSelection(true))
 $('upSelectNone').addEventListener('click', () => setUpSelection(false))
 $('upDownload').addEventListener('click', startBatchDownload)
 
+$('subAdd').addEventListener('click', addSubscription)
+$('subUrl').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') addSubscription()
+})
+$('subSelectMissing').addEventListener('click', () => setSubSelection(true))
+$('subSelectNone').addEventListener('click', () => setSubSelection(false))
+$('subDownload').addEventListener('click', startSubDownload)
+
 $('upFilterBtn').addEventListener('click', openFilterModal)
 $('filterClose').addEventListener('click', closeFilterModal)
 $('filterCancel').addEventListener('click', closeFilterModal)
@@ -1129,6 +1419,14 @@ window.api.onUpProgress((p) => {
   const total = Number(p.total) || 0
   $('upProgressFill').style.width = (total ? Math.min(100, (loaded / total) * 100) : 0) + '%'
   $('upProgressText').textContent = total ? `已获取 ${loaded} / ${total} 个视频` : `已获取 ${loaded} 个视频`
+})
+
+window.api.onSubProgress((p) => {
+  if (!subBusy) return
+  const loaded = Number(p.loaded) || 0
+  const total = Number(p.total) || 0
+  $('subProgressFill').style.width = (total ? Math.min(100, (loaded / total) * 100) : 0) + '%'
+  $('subProgressText').textContent = total ? `已获取 ${loaded} / ${total} 个视频` : `已获取 ${loaded} 个视频`
 })
 
 window.api.onUpdateChecked((st) => {

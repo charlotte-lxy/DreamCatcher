@@ -96,6 +96,52 @@ test('store: 默认代理模式为 system', () => {
   assert.strictEqual(store.DEFAULTS.maxSpeed, 0)
 })
 
+test('bvidFromFilename: 只识别文件名中的完整 BV 号', () => {
+  const sub = require('../main/subscription')
+  assert.strictEqual(sub.bvidFromFilename('UP_2026-01-01_标题 [BV1xx411c7mD].mp4'), 'BV1xx411c7mD')
+  assert.strictEqual(sub.bvidFromFilename('标题 BV1xx411c7mD.mp4'), '')
+  assert.strictEqual(sub.bvidFromFilename('太短的 [BV123].mp4'), '')
+  assert.strictEqual(sub.bvidFromFilename(''), '')
+})
+
+test('buildComparison: 已下载的默认不勾选', () => {
+  const sub = require('../main/subscription')
+  const videos = [
+    { id: 'BV1xx411c7mD', title: '已下载' },
+    { id: 'BV1yy411c7mE', title: '待下载' }
+  ]
+  const local = new Map([['BV1xx411c7mD', 'D:\\downloads\\UP\\已下载 [BV1xx411c7mD].mp4']])
+  const cmp = sub.buildComparison(videos, local)
+  assert.strictEqual(cmp.downloaded, 1)
+  assert.strictEqual(cmp.missing, 1)
+  assert.strictEqual(cmp.videos[0].downloaded, true)
+  assert.strictEqual(cmp.videos[0].selected, false)
+  assert.strictEqual(cmp.videos[0].localPath, 'D:\\downloads\\UP\\已下载 [BV1xx411c7mD].mp4')
+  assert.strictEqual(cmp.videos[1].downloaded, false)
+  assert.strictEqual(cmp.videos[1].selected, true)
+})
+
+test('scanLocalBvids: 递归扫描音视频，忽略非媒体与无 BV 号文件', async () => {
+  const fs = require('node:fs')
+  const os = require('node:os')
+  const sub = require('../main/subscription')
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-subs-'))
+  try {
+    fs.mkdirSync(path.join(root, 'UP'), { recursive: true })
+    fs.writeFileSync(path.join(root, 'UP', 'x_2026-01-01_标题 [BV1xx411c7mD].mp4'), '')
+    fs.writeFileSync(path.join(root, 'UP', 'y [BV1yy411c7mE].m4a'), '')
+    fs.writeFileSync(path.join(root, 'z [BV1zz411c7mF].txt'), '')
+    fs.writeFileSync(path.join(root, 'no-id.mp4'), '')
+    const map = await sub.scanLocalBvids(root)
+    assert.strictEqual(map.size, 2)
+    assert.ok(map.has('BV1xx411c7mD'))
+    assert.ok(map.has('BV1yy411c7mE'))
+    assert.ok(!map.has('BV1zz411c7mF'))
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('buildDownloadArgs: 限速参数', () => {
   const args = dl.buildDownloadArgs({ url: BILI, outDir: 'D:\\out', rateLimit: 512 })
   assert.strictEqual(args[args.indexOf('--limit-rate') + 1], '512K')

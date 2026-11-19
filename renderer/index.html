@@ -30,6 +30,7 @@
   <aside class="rail">
     <nav class="rail-items">
       <button class="rail-btn active" data-module="acquire"><span class="ico">⇩</span><span>资源获取</span></button>
+      <button class="rail-btn" data-module="subscribe"><span class="ico">★</span><span>订阅</span></button>
       <button class="rail-btn" data-module="library"><span class="ico">▦</span><span>资源管理</span></button>
     </nav>
     <div class="rail-bottom">
@@ -99,6 +100,45 @@
               <button id="upDownload" class="btn primary small" disabled>批量下载</button>
             </div>
             <div id="upList" class="up-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 订阅 -->
+      <section class="page" id="page-subscribe">
+        <h1 class="page-title">订阅</h1>
+
+        <div class="panel" data-panel="bili">
+          <div class="card">
+            <div class="row">
+              <input id="subUrl" class="input" type="text" spellcheck="false"
+                     placeholder="粘贴 B 站 UP 主空间链接，例如 https://space.bilibili.com/12345678" />
+              <button id="subAdd" class="btn primary">添加订阅</button>
+            </div>
+            <div id="subStatus" class="status"></div>
+            <div id="subProgress" class="up-progress hidden">
+              <div class="bar"><i id="subProgressFill"></i></div>
+              <span id="subProgressText">已获取 0 个视频</span>
+            </div>
+            <p class="hint">添加后会拉取该 UP 的全部视频，并与下载目录比对；文件名里带 BV 号的视为已下载，已下载的默认不勾选。</p>
+          </div>
+
+          <div class="card">
+            <h3>已订阅 UP</h3>
+            <div id="subList" class="subs"><div class="empty">还没有订阅，先粘贴主页链接添加</div></div>
+          </div>
+
+          <div id="subCompareWrap" class="card hidden">
+            <div class="up-toolbar">
+              <span id="subCompareTitle" class="sub-compare-title">比对清单</span>
+              <span id="subCompareSummary" class="muted"></span>
+              <span class="spacer"></span>
+              <span id="subSelected" class="up-selected">已选 0</span>
+              <button id="subSelectMissing" class="btn ghost small">全选待下载</button>
+              <button id="subSelectNone" class="btn ghost small">取消选择</button>
+              <button id="subDownload" class="btn primary small" disabled>批量下载</button>
+            </div>
+            <div id="subItems" class="up-list"></div>
           </div>
         </div>
       </section>

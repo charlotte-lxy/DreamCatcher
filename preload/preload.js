@@ -19,6 +19,11 @@ contextBridge.exposeInMainWorld('api', {
   testProxy: () => ipcRenderer.invoke('proxy:test'),
   probe: (url) => ipcRenderer.invoke('video:probe', url),
   listUp: (url) => ipcRenderer.invoke('up:list', url),
+  listSubs: () => ipcRenderer.invoke('subs:list'),
+  addSub: (url) => ipcRenderer.invoke('subs:add', url),
+  checkSub: (mid) => ipcRenderer.invoke('subs:check', mid),
+  removeSub: (mid) => ipcRenderer.invoke('subs:remove', mid),
+  compareSub: (payload) => ipcRenderer.invoke('subs:compare', payload),
   download: (payload) => ipcRenderer.invoke('video:download', payload),
   cancel: (id) => ipcRenderer.invoke('video:cancel', id),
   openPath: (p) => ipcRenderer.invoke('shell:open-path', p),
@@ -26,6 +31,7 @@ contextBridge.exposeInMainWorld('api', {
   copyText: (t) => ipcRenderer.invoke('clipboard:write', t),
   onTask: (cb) => ipcRenderer.on('task:progress', (_e, ev) => cb(ev)),
   onUpProgress: (cb) => ipcRenderer.on('up:progress', (_e, p) => cb(p)),
+  onSubProgress: (cb) => ipcRenderer.on('subs:progress', (_e, p) => cb(p)),
   onUpdateChecked: (cb) => ipcRenderer.on('update:checked', (_e, st) => cb(st)),
   onLog: (cb) => ipcRenderer.on('app:log', (_e, line) => cb(line))
 })

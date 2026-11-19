@@ -144,7 +144,7 @@ async function listUpVideos(input, onProgress) {
         charging: !!(v.is_charging_arc || v.is_union_video)
       })
     }
-    if (onProgress) onProgress({ loaded: videos.length, total: total || videos.length })
+    if (onProgress) onProgress({ mid, loaded: videos.length, total: total || videos.length })
     if (!list.length || (total > 0 && videos.length >= total)) break
     if (page < MAX_PAGES) await sleep(PAGE_DELAY)
   }
@@ -157,4 +157,16 @@ async function listUpVideos(input, onProgress) {
   }
 }
 
-module.exports = { parseMid, parseLength, thumbUrl, listUpVideos }
+// 订阅列表要显示 UP 主昵称和头像；这个接口不需要 WBI 签名
+async function fetchUpProfile(mid) {
+  const session = auth.getSession()
+  const j = await fetchJson(session, `https://api.bilibili.com/x/web-interface/card?mid=${encodeURIComponent(mid)}`, headersFor())
+  const card = j && j.code === 0 && j.data && j.data.card
+  if (!card) return { name: '', face: '' }
+  let face = String(card.face || '').trim()
+  if (face.startsWith('//')) face = 'https:' + face
+  face = face.replace(/^http:\/\//i, 'https://')
+  return { name: String(card.name || '').trim(), face }
+}
+
+module.exports = { parseMid, parseLength, thumbUrl, listUpVideos, fetchUpProfile }

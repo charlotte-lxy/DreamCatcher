@@ -267,6 +267,14 @@ function renderTaskSpeed() {
   }
 }
 
+// 失败/取消后按钮改为可点击的「清除」，否则会留下一个点了没反应的「取消」
+function setTaskRemove(ref) {
+  if (!ref) return
+  ref.btn.textContent = '清除'
+  ref.btn.dataset.act = 'remove'
+  ref.btn.disabled = false
+}
+
 function markTaskDone(ref, res) {
   ref.live = false
   ref.percent = 100
@@ -274,6 +282,7 @@ function markTaskDone(ref, res) {
     ref.bar.classList.add('fail')
     ref.pct.textContent = '已取消'
     setTaskInfo(ref, '已取消')
+    setTaskRemove(ref)
     updateTaskBadge()
     updateOverallProgress()
     updateTopbarStatus()
@@ -298,6 +307,7 @@ function markTaskFailed(ref, err) {
   ref.fill.style.width = '100%'
   ref.pct.textContent = '失败'
   setTaskInfo(ref, '失败：' + humanizeError(err.message))
+  setTaskRemove(ref)
   updateTaskBadge()
   updateOverallProgress()
   updateTopbarStatus()
@@ -332,6 +342,23 @@ async function clearTaskHistory() {
     window.alert('清除失败：' + humanizeError(err.message))
   } finally {
     btn.disabled = false
+  }
+}
+
+async function removeTaskRecord(id) {
+  const ref = tasks.get(id)
+  if (!ref || ref.live) return
+  try {
+    const ok = await window.api.removeTask(id)
+    if (!ok) return
+    ref.el.remove()
+    tasks.delete(id)
+    refreshTaskEmpty()
+    updateTaskBadge()
+    updateOverallProgress()
+    updateTopbarStatus()
+  } catch (err) {
+    window.alert('清除失败：' + humanizeError(err.message))
   }
 }
 
@@ -393,13 +420,13 @@ function renderHistoryItem(t) {
     ref.fill.style.width = '100%'
     ref.pct.textContent = '失败'
     ref.info.textContent = '失败：' + humanizeError(t.error || '')
+    setTaskRemove(ref)
   } else if (t.status === 'canceled') {
     ref.percent = 100
     ref.bar.classList.add('fail')
     ref.pct.textContent = '已取消'
     ref.info.textContent = '已取消'
-    ref.btn.textContent = '记录'
-    ref.btn.disabled = true
+    setTaskRemove(ref)
   } else if (t.status === 'interrupted') {
     ref.bar.classList.add('fail')
     ref.pct.textContent = '中断'
@@ -1296,8 +1323,21 @@ $('taskModal').addEventListener('click', async (e) => {
   const id = [...tasks.entries()].find(([, r]) => r.el === task)?.[0]
   if (!id) return
   if (btn.dataset.act === 'cancel') {
+    const ref = tasks.get(id)
     btn.disabled = true
-    await window.api.cancel(id)
+    try {
+      const ok = await window.api.cancel(id)
+      // 任务已经结束时 cancel 返回 false，不能把按钮留在禁用状态
+      if (!ok && ref) {
+        setTaskInfo(ref, '任务已结束')
+        setTaskRemove(ref)
+      }
+    } catch (err) {
+      btn.disabled = false
+      if (ref) setTaskInfo(ref, '取消失败：' + humanizeError(err.message))
+    }
+  } else if (btn.dataset.act === 'remove') {
+    await removeTaskRecord(id)
   } else if (btn.dataset.act === 'open') {
     await revealWithFallback(btn.dataset.path)
   }

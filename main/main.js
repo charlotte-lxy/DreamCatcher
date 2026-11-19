@@ -304,6 +304,15 @@ function registerIpc() {
     return history
   })
 
+  // 失败/取消的任务不在 tasks 里，可以单独清除；还在执行的任务不允许删
+  ipcMain.handle('tasks:remove', (_e, id) => {
+    if (!id || tasks.has(id)) return false
+    history = history.filter((t) => t.id !== id)
+    saveHistory()
+    log(`已删除下载记录 ${id}`)
+    return true
+  })
+
   ipcMain.handle('files:list', async (_e, filter) => {
     const root = effectiveDownloadDir()
     return { root, files: await listMedia(root, filter) }

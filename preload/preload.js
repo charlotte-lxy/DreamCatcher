@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('api', {
   setSettings: (s) => ipcRenderer.invoke('settings:set', s),
   listTasks: () => ipcRenderer.invoke('tasks:list'),
   clearTasks: () => ipcRenderer.invoke('tasks:clear'),
+  removeTask: (id) => ipcRenderer.invoke('tasks:remove', id),
   listFiles: (filter) => ipcRenderer.invoke('files:list', filter),
   trashFile: (p) => ipcRenderer.invoke('files:trash', p),
   pickDir: () => ipcRenderer.invoke('dialog:pick-dir'),

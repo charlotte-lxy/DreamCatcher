@@ -178,7 +178,25 @@ function buildFormats(meta) {
   }
   add('best', '最佳画质')
   for (const h of heights) add(String(h), `${h}p`)
-  add('audio', '仅音频')
+  if (meta.audio !== false) add('audio', '仅音频')
+}
+
+function appendTags(box, tags, limit) {
+  const list = (tags || []).slice(0, limit || 20)
+  for (const t of list) {
+    const chip = document.createElement('span')
+    chip.className = 'tag-chip'
+    chip.textContent = t
+    chip.title = t
+    box.appendChild(chip)
+  }
+  const rest = (tags || []).length - list.length
+  if (rest > 0) {
+    const more = document.createElement('span')
+    more.className = 'tag-chip tag-chip-more'
+    more.textContent = `+${rest}`
+    box.appendChild(more)
+  }
 }
 
 function renderMeta(meta) {
@@ -187,6 +205,11 @@ function renderMeta(meta) {
   $('cover').src = meta.thumbnail || ''
   $('title').textContent = meta.title || '(无标题)'
   $('sub').textContent = `${meta.uploader || '未知作者'} · ${fmtDuration(meta.duration)}`
+  const tagsBox = $('tags')
+  tagsBox.innerHTML = ''
+  const tagList = meta.tags || []
+  appendTags(tagsBox, tagList, 20)
+  tagsBox.classList.toggle('hidden', tagList.length === 0)
   const warn = $('warn')
   const list = (meta.warnings || []).filter((w) => !/^\[bilibili\]/i.test(w) || /supporter|试看/i.test(w))
   if (meta.upowerExclusive) list.unshift('充电专属视频：账号需有该 UP 主的充电权益，否则只会下到试看片段（下载后会自动校验时长）')
@@ -1054,6 +1077,22 @@ function fileRow(f) {
   meta.className = 'file-meta'
   meta.textContent = `${fmtSize(f.size)} · ${fmtDate(f.mtime)}`
   main.append(name, meta)
+  const tagBox = document.createElement('div')
+  tagBox.className = 'file-tags'
+  if (f.tags && f.tags.length) {
+    appendTags(tagBox, f.tags, 8)
+  } else if (f.tagged) {
+    const none = document.createElement('span')
+    none.className = 'file-tag-empty'
+    none.textContent = '无标签'
+    tagBox.appendChild(none)
+  } else if (f.taggable) {
+    const none = document.createElement('span')
+    none.className = 'file-tag-empty'
+    none.textContent = '未打标'
+    tagBox.appendChild(none)
+  }
+  if (tagBox.childNodes.length) main.appendChild(tagBox)
 
   const actions = document.createElement('div')
   actions.className = 'file-actions'
@@ -1105,6 +1144,34 @@ async function loadFiles(filter) {
     for (const f of files) list.appendChild(fileRow(f))
   } catch (err) {
     list.innerHTML = `<div class="empty">扫描失败：${humanizeError(err.message)}</div>`
+  }
+}
+
+let tagRefreshTimer = null
+
+async function startTagAll() {
+  const btn = $('libTag')
+  const status = $('libTagStatus')
+  btn.disabled = true
+  btn.textContent = '打标中…'
+  status.textContent = '正在扫描文件…'
+  status.classList.remove('ok')
+  try {
+    const r = await window.api.tagAll()
+    const parts = [`共扫描 ${r.total} 个文件`, `新打标 ${r.tagged}`]
+    if (r.empty) parts.push(`无标签 ${r.empty}`)
+    if (r.failed) parts.push(`失败 ${r.failed}`)
+    if (r.already) parts.push(`已打标跳过 ${r.already}`)
+    if (r.unrecognized) parts.push(`无法识别 ${r.unrecognized}`)
+    status.textContent = parts.join(' · ')
+    status.classList.toggle('ok', !r.failed)
+    await loadFiles(currentSub.library)
+  } catch (err) {
+    status.textContent = '打标失败：' + humanizeError(err.message)
+    status.classList.remove('ok')
+  } finally {
+    btn.disabled = false
+    btn.textContent = '一键打标'
   }
 }
 
@@ -1354,6 +1421,7 @@ $('loginBtn').addEventListener('click', async () => {
   }
 })
 
+$('libTag').addEventListener('click', startTagAll)
 $('libRefresh').addEventListener('click', () => loadFiles(currentSub.library))
 $('libOpen').addEventListener('click', () => revealWithFallback(''))
 $('libCopy').addEventListener('click', async () => {
@@ -1467,6 +1535,23 @@ window.api.onSubProgress((p) => {
   const total = Number(p.total) || 0
   $('subProgressFill').style.width = (total ? Math.min(100, (loaded / total) * 100) : 0) + '%'
   $('subProgressText').textContent = total ? `已获取 ${loaded} / ${total} 个视频` : `已获取 ${loaded} 个视频`
+})
+
+window.api.onTagProgress((p) => {
+  if (!p) return
+  const status = $('libTagStatus')
+  const extra = []
+  if (p.tagged) extra.push(`已打标 ${p.tagged}`)
+  if (p.empty) extra.push(`无标签 ${p.empty}`)
+  if (p.failed) extra.push(`失败 ${p.failed}`)
+  status.textContent = `正在打标 ${p.done}/${p.total}${p.current ? '（' + p.current + '）' : ''}` + (extra.length ? ' · ' + extra.join(' · ') : '')
+  status.classList.remove('ok')
+})
+
+window.api.onTagsUpdated(() => {
+  if (currentModule !== 'library' || $('libTag').disabled) return
+  clearTimeout(tagRefreshTimer)
+  tagRefreshTimer = setTimeout(() => loadFiles(currentSub.library), 600)
 })
 
 window.api.onUpdateChecked((st) => {

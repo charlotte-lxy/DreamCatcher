@@ -145,6 +145,17 @@ body {
 .sub { color: #8b929e; font-size: 12px; }
 .warn { color: #f0a04b; font-size: 12px; line-height: 1.5; }
 
+.meta-tags, .file-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.meta-tags { margin-top: 2px; }
+.tag-chip {
+  padding: 2px 7px; border-radius: 5px; background: #232838; color: #b9a7ff;
+  font-size: 11px; line-height: 1.6; white-space: nowrap;
+}
+.tag-chip-more { color: #8b929e; background: #1c2027; }
+.file-tags { margin-top: 5px; gap: 4px; }
+.file-tags .tag-chip { font-size: 10px; padding: 1px 6px; }
+.file-tag-empty { color: #6c7480; font-size: 11px; }
+
 .tasks { display: flex; flex-direction: column; gap: 10px; }
 .empty { color: #6c7480; font-size: 13px; padding: 6px 0; }
 .task { background: #12141a; border: 1px solid #262b33; border-radius: 10px; padding: 12px; }

@@ -207,6 +207,64 @@ test('listUpVideos: 默认列表与充电专属列表合并去重', async () => 
   }
 })
 
+test('hanime: 页面元数据、标签与多画质解析', () => {
+  const hanime = require('../main/hanime')
+  const html = `
+    <meta property="og:title" content="[artist] Demo Title - Hanime1.me">
+    <meta property="og:image" content="https://example.com/cover.jpg">
+    <meta property="og:video:duration" content="42">
+    <meta name="keywords" content="Tag A, Tag B, 1080p, 無碼">
+    <a href="https://hanime1.me/user/123">artist</a>
+    <a href="https://hanime1.me/search?genre=3DCG">3DCG</a>
+    <div>2026-11-19</div>
+    <source src="https://vdownload.hembed.com/123-720p.mp4?secure=x">
+    <source src="https://vdownload.hembed.com/123-1080p.mp4?secure=y">
+    <div>tags%5B%5D=1080p</div>
+  `
+  const info = hanime.parsePage(html, '123')
+  assert.strictEqual(info.title, '[artist] Demo Title')
+  assert.strictEqual(info.uploader, 'artist')
+  assert.strictEqual(info.uploadDate, '2026-11-19')
+  assert.strictEqual(info.duration, 42)
+  assert.deepStrictEqual(info.formats.map((f) => f.height), [1080, 720])
+  assert.deepStrictEqual(info.tags, ['Tag A', 'Tag B', '無碼', '3DCG'])
+  assert.strictEqual(hanime.pickFormat(info.formats, 0).height, 1080)
+  assert.strictEqual(hanime.pickFormat(info.formats, 720).height, 720)
+  assert.ok(hanime.outputPath('D:\\out', info).endsWith('artist_2026-11-19_Demo Title [123].mp4'))
+})
+
+test('tags: 三站点链接与文件名识别', () => {
+  const tags = require('../main/tags')
+  assert.deepStrictEqual(tags.detectSite('https://www.bilibili.com/video/BV1kYsW6NE6E'), {
+    site: 'bilibili', id: 'BV1kYsW6NE6E', url: 'https://www.bilibili.com/video/BV1kYsW6NE6E'
+  })
+  assert.strictEqual(tags.detectSite('https://youtu.be/dQw4w9WgXcQ').site, 'youtube')
+  assert.strictEqual(tags.detectSite('https://www.youtube.com/shorts/dQw4w9WgXcQ').site, 'youtube')
+  assert.strictEqual(tags.detectSite('https://hanime1.me/watch?v=409270').site, 'hanime')
+  assert.strictEqual(tags.detectFilename('UP_2026-11-19_标题 [BV1kYsW6NE6E].mp4').site, 'bilibili')
+  assert.strictEqual(tags.detectFilename('标题 [dQw4w9WgXcQ].mp4').site, 'youtube')
+  assert.strictEqual(tags.detectFilename('artist_2026-11-19_Title [409270].mp4').site, 'hanime')
+  assert.strictEqual(tags.detectFilename('没有编号.mp4'), null)
+})
+
+test('tags: YouTube keywords 解析', () => {
+  const tags = require('../main/tags')
+  assert.deepStrictEqual(tags.parseYouTubeKeywords('"keywords":["a","b","a"]'), ['a', 'b'])
+  assert.deepStrictEqual(tags.parseYouTubeKeywords('<meta name="keywords" content="x, y, z">'), ['x', 'y', 'z'])
+})
+
+test('buildDownloadArgs: Hanime 直链使用固定输出且不选格式', () => {
+  const args = dl.buildDownloadArgs({
+    url: 'https://vdownload.hembed.com/409270-1080p.mp4?secure=x',
+    direct: true,
+    output: 'D:\\out\\artist\\file.mp4',
+    outDir: 'D:\\out\\artist'
+  })
+  assert.strictEqual(args[args.indexOf('-o') + 1], 'D:\\out\\artist\\file.mp4')
+  assert.ok(!args.includes('-f'), '直链不该再传 -f')
+  assert.ok(!args.includes('--merge-output-format'), '直链不该再要求合并')
+})
+
 test('buildDownloadArgs: 限速参数', () => {
   const args = dl.buildDownloadArgs({ url: BILI, outDir: 'D:\\out', rateLimit: 512 })
   assert.strictEqual(args[args.indexOf('--limit-rate') + 1], '512K')

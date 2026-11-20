@@ -10,6 +10,8 @@ const updater = require('./updater')
 const proxy = require('./proxy')
 const store = require('./store')
 const subs = require('./subscription')
+const hanime = require('./hanime')
+const tagApi = require('./tags')
 
 const ROOT = path.join(__dirname, '..')
 const IS_PACKAGED = app.isPackaged
@@ -59,6 +61,7 @@ let win = null
 let settings = store.read('settings.json', store.DEFAULTS)
 let history = store.readAny('tasks.json', []).map((t) => (t.status === 'running' ? Object.assign({}, t, { status: 'interrupted' }) : t))
 let subscriptions = store.readAny('subscriptions.json', []).filter((s) => s && typeof s.mid === 'string' && s.mid)
+let tagStore = store.read('tags.json', {})
 const HISTORY_LIMIT = 50
 const tasks = new Map()
 const queue = []
@@ -97,6 +100,112 @@ async function fetchComparison(url) {
   const list = await bili.listUpVideos(url, sendSubProgress)
   const local = await subs.scanLocalBvids(effectiveDownloadDir())
   return { list, comparison: subs.buildComparison(list.videos, local) }
+}
+
+function saveTagStore() {
+  store.write('tags.json', tagStore)
+}
+
+function tagRecord(site, id) {
+  if (!site || !id) return null
+  return tagStore[tagApi.tagKey(site, id)] || null
+}
+
+function rememberTags(site, id, tags) {
+  const rec = { site, id, tags: tagApi.normalizeTags(tags), updatedAt: Date.now() }
+  tagStore[tagApi.tagKey(site, id)] = rec
+  saveTagStore()
+  if (win && !win.isDestroyed()) win.webContents.send('tags:updated', { site, id, key: tagApi.tagKey(site, id), tags: rec.tags })
+  return rec
+}
+
+function sendTagProgress(p) {
+  if (win && !win.isDestroyed()) win.webContents.send('tags:progress', p)
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function ensureTagsForUrl(url, opts = {}) {
+  const info = tagApi.detectSite(url)
+  if (!info) return { info: null, tags: [] }
+  const existing = tagRecord(info.site, info.id)
+  if (existing && !opts.force) return { info, tags: existing.tags || [] }
+  const proxyUrl = await proxyFor(url)
+  const list = await tagApi.fetchTags(info.site, info.id, { proxy: proxyUrl })
+  const rec = rememberTags(info.site, info.id, list)
+  log(`标签 ${info.site}:${info.id} ${rec.tags.length ? rec.tags.slice(0, 8).join('、') : '无'}`)
+  return { info, tags: rec.tags }
+}
+
+const autoTagQueue = []
+let autoTagRunning = false
+
+// 下载完成后异步拉标签，串行执行，避免批量下载时同时请求大量页面
+function enqueueAutoTag(url) {
+  if (!url || autoTagQueue.includes(url)) return
+  autoTagQueue.push(url)
+  if (autoTagRunning) return
+  autoTagRunning = true
+  Promise.resolve().then(async () => {
+    try {
+      while (autoTagQueue.length) {
+        const next = autoTagQueue.shift()
+        try {
+          await ensureTagsForUrl(next)
+        } catch (err) {
+          log(`自动打标失败 ${next}: ${err.message}`)
+        }
+        await sleep(300)
+      }
+    } finally {
+      autoTagRunning = false
+    }
+  })
+}
+
+async function tagAllFiles() {
+  const root = effectiveDownloadDir()
+  const files = await listMedia(root, 'all')
+  const targets = []
+  let already = 0
+  let unrecognized = 0
+  for (const f of files) {
+    const info = tagApi.detectFilename(f.path)
+    if (!info) {
+      unrecognized++
+      continue
+    }
+    if (tagRecord(info.site, info.id)) {
+      already++
+      continue
+    }
+    targets.push(info)
+  }
+
+  let done = 0
+  let tagged = 0
+  let empty = 0
+  let failed = 0
+  sendTagProgress({ done, total: targets.length, tagged, empty, failed })
+  for (const info of targets) {
+    try {
+      const proxyUrl = await proxyFor(info.url)
+      const list = await tagApi.fetchTags(info.site, info.id, { proxy: proxyUrl })
+      rememberTags(info.site, info.id, list)
+      if (list.length) tagged++
+      else empty++
+    } catch (err) {
+      failed++
+      log(`一键打标失败 ${info.site}:${info.id}: ${err.message}`)
+    }
+    done++
+    sendTagProgress({ done, total: targets.length, current: info.id, tagged, empty, failed })
+    await sleep(250)
+  }
+  log(`一键打标完成: 新打标 ${tagged}, 无标签 ${empty}, 失败 ${failed}, 已打标 ${already}, 无法识别 ${unrecognized}`)
+  return { total: files.length, targets: targets.length, tagged, empty, failed, already, unrecognized }
 }
 
 function pushHistory(rec) {
@@ -315,8 +424,24 @@ function registerIpc() {
 
   ipcMain.handle('files:list', async (_e, filter) => {
     const root = effectiveDownloadDir()
-    return { root, files: await listMedia(root, filter) }
+    const files = await listMedia(root, filter)
+    for (const f of files) {
+      const info = tagApi.detectFilename(f.path)
+      f.taggable = !!info
+      f.tagged = false
+      f.tags = []
+      if (info) {
+        const rec = tagRecord(info.site, info.id)
+        if (rec) {
+          f.tagged = true
+          f.tags = rec.tags || []
+        }
+      }
+    }
+    return { root, files }
   })
+
+  ipcMain.handle('tags:tagAll', () => tagAllFiles())
 
   ipcMain.handle('files:trash', async (_e, p) => {
     if (!p) return false
@@ -381,6 +506,35 @@ function registerIpc() {
 
   ipcMain.handle('video:probe', async (_e, url) => {
     if (!/^https?:\/\//i.test(url || '')) throw new Error('链接格式不对，需要以 http(s):// 开头')
+    if (hanime.isUrl(url)) {
+      const proxyUrl = await proxyFor(url)
+      const info = await hanime.probe(url, { proxy: proxyUrl })
+      const rec = rememberTags('hanime', info.id, info.tags)
+      log(`解析成功: ${info.title} (hanime, proxy=${proxyUrl || 'direct'})`)
+      return {
+        id: info.id,
+        site: 'hanime',
+        title: info.title,
+        uploader: info.uploader,
+        duration: info.duration,
+        thumbnail: info.thumbnail,
+        webpage_url: info.url,
+        formats: info.formats.map((f) => ({
+          format_id: f.format_id,
+          height: f.height,
+          ext: f.ext,
+          vcodec: f.vcodec,
+          acodec: f.acodec,
+          tbr: f.tbr,
+          filesize: f.filesize,
+          note: f.note
+        })),
+        warnings: [],
+        tags: rec.tags,
+        audio: false
+      }
+    }
+
     const cookieFile = await makeCookieFile('probe-' + Date.now().toString(36))
     try {
       const proxyUrl = await proxyFor(url)
@@ -388,6 +542,14 @@ function registerIpc() {
       if (warnings.length) log(`解析警告: ${warnings.join(' | ')}`)
       log(`解析成功: ${info.title} (proxy=${proxyUrl || 'direct'})`)
       const meta = Object.assign(pickMeta(info), { warnings })
+      meta.site = (tagApi.detectSite(url) || {}).site || ''
+      try {
+        const tagResult = await ensureTagsForUrl(url)
+        meta.tags = tagResult.tags
+      } catch (err) {
+        log(`获取标签失败: ${err.message}`)
+        meta.tags = []
+      }
       if (/bilibili\.com\/video\//i.test(url)) meta.upowerExclusive = await checkUpower(url)
       return meta
     } finally {
@@ -475,11 +637,12 @@ function registerIpc() {
     const state = { pid: 0, canceled: false }
     tasks.set(id, state)
     pushHistory({ id, url: payload.url, title: payload.title || payload.url, status: 'running', createdAt: Date.now() })
-    const cookieFile = await makeCookieFile(id)
+    const isHanime = hanime.isUrl(payload.url)
+    const cookieFile = isHanime ? '' : await makeCookieFile(id)
 
     return new Promise((resolve, reject) => {
       const cleanup = () => {
-        fs.rm(cookieFile, { force: true }, () => {})
+        if (cookieFile) fs.rm(cookieFile, { force: true }, () => {})
         tasks.delete(id)
       }
       queue.push(async () => {
@@ -490,16 +653,39 @@ function registerIpc() {
         }
         try {
           const proxyUrl = await proxyFor(payload.url)
-          const format = formatFor(Number(payload.maxHeight) || 0, !!payload.audioOnly)
-          log(`开始下载 ${id}: ${payload.url} format=${format} proxy=${proxyUrl || 'direct'}`)
-          const res = await dl.start(
-            { id, url: payload.url, format, outDir: effectiveDownloadDir(), cookieFile, proxy: proxyUrl, state, rateLimit: Number(settings.maxSpeed) || 0 },
-            (ev) => {
-              if (ev.type === 'spawn') state.pid = ev.pid
-              if (ev.type === 'file') log(`下载完成 ${id}: ${ev.file}`)
-              if (win && !win.isDestroyed()) win.webContents.send('task:progress', Object.assign({ id }, ev))
-            }
-          )
+          const onEvent = (ev) => {
+            if (ev.type === 'spawn') state.pid = ev.pid
+            if (ev.type === 'file') log(`下载完成 ${id}: ${ev.file}`)
+            if (win && !win.isDestroyed()) win.webContents.send('task:progress', Object.assign({ id }, ev))
+          }
+          let res
+          if (isHanime) {
+            const info = await hanime.probe(payload.url, { proxy: proxyUrl })
+            const chosen = hanime.pickFormat(info.formats, Number(payload.maxHeight) || 0)
+            if (!chosen) throw new Error('没有找到可下载的视频源')
+            const final = hanime.outputPath(effectiveDownloadDir(), info)
+            fs.mkdirSync(path.dirname(final), { recursive: true })
+            log(`开始下载 ${id}: ${payload.url} (hanime ${chosen.height}p, proxy=${proxyUrl || 'direct'})`)
+            res = await dl.start({
+              id,
+              url: chosen.url,
+              direct: true,
+              // yt-dlp 会把 -o 当模板，标题里的 % 需要转义成 %%
+              output: final.replace(/%/g, '%%'),
+              outDir: path.dirname(final),
+              proxy: proxyUrl,
+              state,
+              rateLimit: Number(settings.maxSpeed) || 0
+            }, onEvent)
+            if (!res.file && fs.existsSync(final)) res.file = final
+          } else {
+            const format = formatFor(Number(payload.maxHeight) || 0, !!payload.audioOnly)
+            log(`开始下载 ${id}: ${payload.url} format=${format} proxy=${proxyUrl || 'direct'}`)
+            res = await dl.start(
+              { id, url: payload.url, format, outDir: effectiveDownloadDir(), cookieFile, proxy: proxyUrl, state, rateLimit: Number(settings.maxSpeed) || 0 },
+              onEvent
+            )
+          }
           // 没有权益时 yt-dlp 会把试看片段当成功下载，这里用时长兜底识别
           let warning = ''
           const expected = Number(payload.expectedDuration) || 0
@@ -516,6 +702,7 @@ function registerIpc() {
             updateHistory(id, { status: 'canceled', finishedAt: Date.now() })
           } else {
             updateHistory(id, { status: 'done', file: res.file, warning, finishedAt: Date.now() })
+            if (res.file) enqueueAutoTag(payload.url)
           }
           resolve({ ok: true, file: res.file, canceled: !!res.canceled, warning })
         } catch (err) {
@@ -534,6 +721,7 @@ function registerIpc() {
     const t = tasks.get(id)
     if (!t) return false
     t.canceled = true
+    if (t.abort) t.abort()
     if (t.pid) dl.cancel(t.pid)
     log(`已请求取消 ${id}`)
     return true

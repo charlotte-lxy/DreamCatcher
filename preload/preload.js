@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('api', {
   listTasks: () => ipcRenderer.invoke('tasks:list'),
   clearTasks: () => ipcRenderer.invoke('tasks:clear'),
   removeTask: (id) => ipcRenderer.invoke('tasks:remove', id),
+  tagAll: () => ipcRenderer.invoke('tags:tagAll'),
   listFiles: (filter) => ipcRenderer.invoke('files:list', filter),
   trashFile: (p) => ipcRenderer.invoke('files:trash', p),
   pickDir: () => ipcRenderer.invoke('dialog:pick-dir'),
@@ -33,6 +34,8 @@ contextBridge.exposeInMainWorld('api', {
   onTask: (cb) => ipcRenderer.on('task:progress', (_e, ev) => cb(ev)),
   onUpProgress: (cb) => ipcRenderer.on('up:progress', (_e, p) => cb(p)),
   onSubProgress: (cb) => ipcRenderer.on('subs:progress', (_e, p) => cb(p)),
+  onTagProgress: (cb) => ipcRenderer.on('tags:progress', (_e, p) => cb(p)),
+  onTagsUpdated: (cb) => ipcRenderer.on('tags:updated', (_e, p) => cb(p)),
   onUpdateChecked: (cb) => ipcRenderer.on('update:checked', (_e, st) => cb(st)),
   onLog: (cb) => ipcRenderer.on('app:log', (_e, line) => cb(line))
 })

@@ -205,11 +205,19 @@ function buildDownloadArgs(o) {
     '--windows-filenames', '--sleep-requests', '1', '--encoding', 'utf-8',
     '--force-overwrites',
     '--progress-template', 'download:PROG:%(progress)j',
-    '--print', 'after_move:FILE:%(filepath)s',
-    '-f', o.format || 'bv*+ba/b',
-    '--merge-output-format', 'mp4',
-    '-o', path.join(o.outDir, '%(uploader)s', '%(uploader)s_%(upload_date>%Y-%m-%d)s_%(title)s [%(id)s].%(ext)s')
-  ].concat(ffmpegArgs(), runtimeArgs())
+    '--print', 'after_move:FILE:%(filepath)s'
+  ]
+  if (o.direct) {
+    // Hanime 等直链场景：只下载给定文件，不再选格式/合并
+    args.push('-o', o.output)
+  } else {
+    args.push(
+      '-f', o.format || 'bv*+ba/b',
+      '--merge-output-format', 'mp4',
+      '-o', path.join(o.outDir, '%(uploader)s', '%(uploader)s_%(upload_date>%Y-%m-%d)s_%(title)s [%(id)s].%(ext)s')
+    )
+  }
+  args.push(...ffmpegArgs(), ...runtimeArgs())
   if (o.cookieFile) args.push('--cookies', o.cookieFile)
   if (o.proxy) args.push('--proxy', o.proxy)
   if (o.rateLimit) args.push('--limit-rate', `${Math.round(o.rateLimit)}K`)

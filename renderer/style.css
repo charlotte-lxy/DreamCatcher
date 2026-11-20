@@ -347,3 +347,6 @@ body {
 .dir-row:hover { background: #1f232c; }
 .dir-row .ico { color: #b9a7ff; }
 .dir-row .dir-size { margin-left: auto; color: #6c7480; font-size: 12px; }
+
+.modal-body .check { margin-top: 14px; }
+.modal-body .status { margin-top: 10px; }

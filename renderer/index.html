@@ -200,33 +200,10 @@
 
         <div id="ugBody" class="hidden">
           <div class="card">
-            <h3>添加上传任务</h3>
-            <div class="row">
-              <span class="field-label">订阅</span>
-              <select id="ugSub" class="select"></select>
-              <span class="field-label">同步方式</span>
-              <select id="ugMode" class="select">
-                <option value="manual">手动同步</option>
-                <option value="auto">自动同步</option>
-              </select>
-            </div>
-            <div class="row">
-              <span class="field-label">上传位置</span>
-              <input id="ugDest" class="input" readonly placeholder="点击「浏览」选择绿联云目录" />
-              <button id="ugBrowse" class="btn ghost">浏览</button>
-            </div>
-            <div class="row">
-              <label class="check"><input id="ugDeleteLocal" type="checkbox" /> 上传成功后删除本地文件</label>
-              <span class="spacer"></span>
-              <button id="ugCreate" class="btn primary">添加上传任务</button>
-            </div>
-            <div id="ugStatus" class="status"></div>
-          </div>
-
-          <div class="card">
             <div class="row">
               <h3>上传任务</h3>
               <span class="spacer"></span>
+              <button id="ugAdd" class="btn primary small">添加上传任务</button>
               <button id="ugRefresh" class="btn ghost small">刷新</button>
             </div>
             <div id="ugTasks" class="files"><div class="empty">还没有上传任务</div></div>
@@ -483,6 +460,44 @@
         <span class="spacer"></span>
         <button id="subSettingsCancel" class="btn ghost small" type="button">取消</button>
         <button id="subSettingsSave" class="btn primary small" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="ugTaskModal" class="modal-mask hidden" role="dialog" aria-modal="true" aria-labelledby="ugTaskTitle">
+    <div class="modal">
+      <div class="modal-head">
+        <h2 id="ugTaskTitle">添加上传任务</h2>
+        <button id="ugTaskClose" class="modal-close" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="row">
+          <span class="field-label">订阅</span>
+          <select id="ugSub" class="select"></select>
+        </div>
+        <div class="row">
+          <span class="field-label">同步方式</span>
+          <select id="ugMode" class="select">
+            <option value="manual">手动同步</option>
+            <option value="auto">自动同步</option>
+          </select>
+        </div>
+        <div class="row">
+          <span class="field-label">上传位置</span>
+          <select id="ugRoot" class="select">
+            <option value="home">个人文件夹</option>
+            <option value="share">共享文件夹</option>
+          </select>
+          <input id="ugDest" class="input" readonly placeholder="点击「浏览」选择目录" />
+          <button id="ugBrowse" class="btn ghost" type="button">浏览</button>
+        </div>
+        <label class="check"><input id="ugDeleteLocal" type="checkbox" /> 上传成功后删除本地文件</label>
+        <div id="ugStatus" class="status"></div>
+      </div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="ugCancel" class="btn ghost small" type="button">取消</button>
+        <button id="ugCreate" class="btn primary small" type="button">确定</button>
       </div>
     </div>
   </div>

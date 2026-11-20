@@ -269,7 +269,30 @@ function checkOk(json, what) {
   return json
 }
 
+// /volume1 本身不可列（1301），一级共享目录只能通过共享文件夹接口取
+async function listShares() {
+  const json = checkOk(
+    await api(null, '/ugreen/v1/filemgr/getSharedFolderList', {
+      method: 'GET',
+      query: { page: 1, limit: 200 }
+    }),
+    '读取共享文件夹'
+  )
+  const list = (json.data && json.data.data) || []
+  const dirs = []
+  for (const s of list) {
+    const name = String(s.name || '')
+    const p = String(s.path || '')
+    if (name && p) dirs.push({ name, path: p })
+  }
+  return dirs
+}
+
 async function listDir(dirPath) {
+  if (dirPath === '/volume1') {
+    const dirs = (await listShares()).sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+    return { path: dirPath, dirs, files: [] }
+  }
   const json = checkOk(
     await api(null, '/ugreen/v2/filemgr/getDirFileListV2', {
       method: 'POST',

@@ -1834,7 +1834,6 @@ async function saveUgreenAccount() {
 async function loadUploadPage() {
   await refreshUgreenStatus(false)
   if (!ugStatus || !ugStatus.ok) return
-  await loadUploadSubs()
   await loadUploadTasks()
 }
 
@@ -1940,11 +1939,37 @@ function renderUploadTasks() {
   }
 }
 
+function ugRootMode() {
+  return $('ugRoot').value === 'share' ? 'share' : 'home'
+}
+
+function ugRootPath() {
+  if (ugRootMode() === 'share') return '/volume1'
+  const user = (ugConfig && ugConfig.username) || ''
+  return user ? `/home/${user}` : '/home'
+}
+
+async function openUgTaskModal() {
+  $('ugTaskModal').classList.remove('hidden')
+  $('ugDest').value = ''
+  setUgStatus('')
+  if (!ugConfig || !ugConfig.username) await loadUgreenConfig()
+  await loadUploadSubs()
+}
+
+function closeUgTaskModal() {
+  $('ugTaskModal').classList.add('hidden')
+}
+
 async function createUploadTask() {
   const subKey = $('ugSub').value
   const dest = $('ugDest').value.trim()
   if (!subKey) return setUgStatus('先选择一个订阅')
   if (!dest) return setUgStatus('先选择绿联云上传位置')
+  const root = ugRootPath()
+  if (dest !== root && !dest.startsWith(root + '/')) {
+    return setUgStatus(`上传位置要选在 ${root} 下面`)
+  }
   const sel = $('ugSub').selectedOptions[0]
   const exist = ugTasks.find((t) => t.subKey === subKey && t.dest === dest)
   const task = {
@@ -1956,18 +1981,21 @@ async function createUploadTask() {
     enabled: true
   }
   if (exist) task.id = exist.id
+  $('ugCreate').disabled = true
   try {
     ugTasks = await window.api.saveUpload(task)
     renderUploadTasks()
-    setUgStatus(exist ? '已更新这条上传任务' : '已添加上传任务', true)
+    closeUgTaskModal()
   } catch (err) {
-    setUgStatus('添加失败：' + humanizeError(err.message))
+    setUgStatus('保存失败：' + humanizeError(err.message))
+  } finally {
+    $('ugCreate').disabled = false
   }
 }
 
-async function openUgDir() {
+function openUgDir() {
   $('dirModal').classList.remove('hidden')
-  await loadUgDir('/home')
+  return loadUgDir(ugRootPath())
 }
 
 function closeUgDir() {
@@ -2001,7 +2029,8 @@ async function loadUgDir(p) {
       box.appendChild(empty)
     }
     $('dirPath').textContent = ugDirPath + (r.files.length ? `（${r.files.length} 个文件）` : '')
-    $('dirUp').disabled = ugDirPath === '/home'
+    $('dirUp').disabled = ugDirPath === ugRootPath()
+    $('dirPick').disabled = ugDirPath === '/volume1'
   } catch (err) {
     const box = $('dirList')
     box.innerHTML = ''
@@ -2027,7 +2056,17 @@ $('ugGoAccount').addEventListener('click', () => {
   switchModule('settings')
 })
 
+$('ugAdd').addEventListener('click', openUgTaskModal)
 $('ugCreate').addEventListener('click', createUploadTask)
+$('ugCancel').addEventListener('click', closeUgTaskModal)
+$('ugTaskClose').addEventListener('click', closeUgTaskModal)
+$('ugTaskModal').addEventListener('click', (e) => {
+  if (e.target === $('ugTaskModal')) closeUgTaskModal()
+})
+$('ugRoot').addEventListener('change', () => {
+  $('ugDest').value = ''
+  setUgStatus('')
+})
 $('ugBrowse').addEventListener('click', openUgDir)
 $('ugRefresh').addEventListener('click', () => {
   refreshUgreenStatus(false)
@@ -2040,10 +2079,11 @@ $('dirModal').addEventListener('click', (e) => {
   if (e.target === $('dirModal')) closeUgDir()
 })
 $('dirUp').addEventListener('click', () => {
-  if (ugDirPath === '/home') return
+  if (ugDirPath === ugRootPath()) return
   loadUgDir(ugDirPath.split('/').slice(0, -1).join('/') || '/')
 })
 $('dirPick').addEventListener('click', () => {
+  if (ugDirPath === '/volume1') return setUgStatus('请先进入一个共享文件夹')
   $('ugDest').value = ugDirPath
   closeUgDir()
   setUgStatus('')
@@ -2178,7 +2218,8 @@ $('taskModal').addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return
   if (!$('subSettingsModal').classList.contains('hidden')) closeSubSettings()
-  else if (!$('dirModal').classList.contains('hidden')) closeDirModal()
+  else if (!$('dirModal').classList.contains('hidden')) closeUgDir()
+  else if (!$('ugTaskModal').classList.contains('hidden')) closeUgTaskModal()
   else if (!$('filterModal').classList.contains('hidden')) closeFilterModal()
   else if (!$('taskModal').classList.contains('hidden')) closeTaskModal()
 })

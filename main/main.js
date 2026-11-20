@@ -936,6 +936,12 @@ function registerIpc() {
 
   ipcMain.handle('upload:remove', (_e, id) => upload.remove(id))
 
+  ipcMain.handle('upload:clearHistory', () => {
+    const n = upload.clearHistory()
+    log(`已清除上传记录 ${n} 条`)
+    return n
+  })
+
   ipcMain.handle('upload:run', async (_e, id) => {
     const r = await upload.runTask(id, { downloadDir: effectiveDownloadDir(), onProgress: sendUploadProgress })
     log(`上传任务 ${id}: 上传 ${r.uploaded} 跳过 ${r.skipped} 失败 ${r.failed}${r.error ? ' ' + r.error : ''}`)

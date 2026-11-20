@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('api', {
   setSettings: (s) => ipcRenderer.invoke('settings:set', s),
   listTasks: () => ipcRenderer.invoke('tasks:list'),
   clearTasks: () => ipcRenderer.invoke('tasks:clear'),
+  clearUploads: () => ipcRenderer.invoke('upload:clearHistory'),
   removeTask: (id) => ipcRenderer.invoke('tasks:remove', id),
   tagAll: () => ipcRenderer.invoke('tags:tagAll'),
   listFiles: (filter) => ipcRenderer.invoke('files:list', filter),

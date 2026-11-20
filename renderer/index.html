@@ -423,27 +423,47 @@
           <button class="task-rail-btn" data-taskmodule="upload" type="button">上传</button>
         </aside>
         <div class="task-panes">
-          <div class="modal-body task-pane" data-taskpane="download">
-            <div id="taskOverall" class="task-overall hidden">
-              <div class="task-overall-head">
-                <span>总体进度</span>
-                <span id="taskOverallText">0%</span>
+          <div class="task-pane" data-taskpane="download">
+            <div class="task-fixed">
+              <div id="taskOverall" class="task-overall hidden">
+                <div class="task-overall-head">
+                  <span>总体进度</span>
+                  <span id="taskOverallText">0%</span>
+                </div>
+                <div class="bar"><i id="taskOverallFill"></i></div>
               </div>
-              <div class="bar"><i id="taskOverallFill"></i></div>
+              <div class="task-filters">
+                <button class="task-filter-btn active" data-taskfilter="all" type="button">全部</button>
+                <button class="task-filter-btn" data-taskfilter="live" type="button">下载中</button>
+                <button class="task-filter-btn" data-taskfilter="done" type="button">已完成</button>
+              </div>
             </div>
-            <div id="activeTasks" class="tasks"><div class="empty">还没有任务</div></div>
-            <div id="tasks" class="tasks task-history"></div>
+            <div class="modal-body task-scroll">
+              <div id="activeTasks" class="tasks"><div class="empty">还没有任务</div></div>
+              <div id="tasks" class="tasks task-history"></div>
+              <div id="taskFilterEmpty" class="empty task-filter-empty hidden">没有符合条件的记录</div>
+            </div>
           </div>
-          <div class="modal-body task-pane hidden" data-taskpane="upload">
-            <div id="uploadOverall" class="task-overall hidden">
-              <div class="task-overall-head">
-                <span>上传进度</span>
-                <span id="uploadOverallText">0%</span>
+          <div class="task-pane hidden" data-taskpane="upload">
+            <div class="task-fixed">
+              <div id="uploadOverall" class="task-overall hidden">
+                <div class="task-overall-head">
+                  <span>上传进度</span>
+                  <span id="uploadOverallText">0%</span>
+                </div>
+                <div class="bar"><i id="uploadOverallFill"></i></div>
               </div>
-              <div class="bar"><i id="uploadOverallFill"></i></div>
+              <div class="task-filters">
+                <button class="task-filter-btn active" data-taskfilter="all" type="button">全部</button>
+                <button class="task-filter-btn" data-taskfilter="live" type="button">上传中</button>
+                <button class="task-filter-btn" data-taskfilter="done" type="button">已完成</button>
+              </div>
             </div>
-            <div id="uploadActive" class="tasks"><div class="empty">还没有上传中的文件</div></div>
-            <div id="uploadHistory" class="tasks task-history"></div>
+            <div class="modal-body task-scroll">
+              <div id="uploadActive" class="tasks"><div class="empty">还没有上传中的文件</div></div>
+              <div id="uploadHistory" class="tasks task-history"></div>
+              <div id="uploadFilterEmpty" class="empty task-filter-empty hidden">没有符合条件的记录</div>
+            </div>
           </div>
         </div>
       </div>

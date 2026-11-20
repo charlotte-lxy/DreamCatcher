@@ -368,4 +368,15 @@ body {
 .task-rail-btn:hover { background: #1c2028; color: #e7e9ee; }
 .task-rail-btn.active { background: #23202f; border-color: #332c4d; color: #b9a7ff; }
 .task-panes { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.task-pane { flex: 1; min-height: 0; }
+.task-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* 进度条与筛选按钮固定在顶部，只有下面的列表滚动 */
+.task-fixed { flex: none; padding: 14px 18px 0; }
+.task-scroll { flex: 1; min-height: 0; overflow: auto; padding-top: 12px; }
+.task-filters { display: flex; align-items: center; gap: 6px; padding: 10px 0 0; }
+.task-filter-btn {
+  height: 28px; padding: 0 12px; border: 1px solid #2b313b; border-radius: 8px;
+  background: transparent; color: #8b929e; font-size: 12px; cursor: pointer;
+}
+.task-filter-btn:hover { background: #1c2028; color: #e7e9ee; }
+.task-filter-btn.active { background: #23202f; border-color: #332c4d; color: #b9a7ff; }
+.task-filter-empty { padding: 22px 0; }

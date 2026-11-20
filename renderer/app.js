@@ -255,7 +255,7 @@ function updateTaskBadge() {
 
 // 任务列表顶部的说明与「清除」按钮按当前模块切换
 function updateTaskSummary() {
-  $('taskClear').classList.toggle('hidden', taskModule !== 'download')
+  $('taskClear').textContent = taskModule === 'upload' ? '清除上传记录' : '清除下载记录'
   if (taskModule === 'upload') {
     const live = [...uploadEntries.values()].filter((r) => r.live).length
     $('taskSummary').textContent = live
@@ -342,6 +342,23 @@ function uploadEntryKey(p) {
   return String(p.taskId || '') + '|' + String(p.file || '')
 }
 
+function refreshUploadEmpty() {
+  const box = $('uploadActive')
+  if (!box) return
+  const empty = box.querySelector('.empty')
+  const hasEntry = [...uploadEntries.values()].some((r) => r.el.parentNode === box)
+  if (!hasEntry) {
+    if (!empty) {
+      const el = document.createElement('div')
+      el.className = 'empty'
+      el.textContent = '还没有上传中的文件'
+      box.appendChild(el)
+    }
+  } else if (empty) {
+    empty.remove()
+  }
+}
+
 function ensureUploadEntry(p) {
   const key = uploadEntryKey(p)
   const found = uploadEntries.get(key)
@@ -378,6 +395,7 @@ function ensureUploadEntry(p) {
   }
   uploadEntries.set(key, ref)
   pruneUploadEntries()
+  applyTaskFilter('upload')
   return ref
 }
 
@@ -394,6 +412,7 @@ function pruneUploadEntries() {
 function markUploadEntryDone(ref, dest) {
   ref.live = false
   ref.percent = 100
+  applyTaskFilter('upload')
   ref.speed = 0
   ref.bar.classList.remove('fail')
   ref.bar.classList.add('done')
@@ -408,6 +427,7 @@ function markUploadEntryDone(ref, dest) {
 function markUploadEntryFailed(ref, message) {
   ref.live = false
   ref.percent = 100
+  applyTaskFilter('upload')
   ref.speed = 0
   ref.bar.classList.add('fail')
   ref.fill.style.width = '100%'
@@ -459,13 +479,44 @@ function renderUploadHistory() {
     if (t.last.bytes) parts.push(fmtSize(t.last.bytes))
     if (t.last.error) parts.push(t.last.error)
     el.querySelector('.task-info').textContent = parts.join(' · ')
+    el.classList.add('task-history-item')
     box.appendChild(el)
   }
+  applyTaskFilter('upload')
 }
 
 async function reloadUploadHistory() {
   await loadUploadTasks()
   renderUploadHistory()
+}
+
+const taskFilters = { download: 'all', upload: 'all' }
+
+// 按「全部 / 进行中 / 已完成」过滤任务条目；历史条目只在「已完成」里出现
+function applyTaskFilter(mod) {
+  const mode = taskFilters[mod] || 'all'
+  const pane = document.querySelector(`.task-pane[data-taskpane="${mod}"]`)
+  if (!pane) return
+  for (const b of pane.querySelectorAll('.task-filter-btn')) {
+    b.classList.toggle('active', b.dataset.taskfilter === mode)
+  }
+  const source = mod === 'upload' ? uploadEntries : tasks
+  for (const ref of source.values()) {
+    const live = !!ref.live
+    ref.el.classList.toggle('hidden', mode === 'live' ? !live : mode === 'done' ? live : false)
+  }
+  for (const el of pane.querySelectorAll('.task-history-item')) {
+    el.classList.toggle('hidden', mode === 'live')
+  }
+  // 历史记录整块没有可见条目时连分隔线一起收起来
+  for (const box of pane.querySelectorAll('.task-history')) {
+    const items = [...box.querySelectorAll('.task')]
+    box.classList.toggle('hidden', items.length > 0 && items.every((el) => el.classList.contains('hidden')))
+  }
+  const visible = [...pane.querySelectorAll('.task')].filter((el) => !el.classList.contains('hidden')).length
+  const hint = pane.querySelector('.task-filter-empty')
+  // 「全部」下空列表已有各自的占位文案，这里只在筛选后为空时补一句
+  if (hint) hint.classList.toggle('hidden', mode === 'all' || visible > 0)
 }
 
 function setTaskModule(name) {
@@ -477,6 +528,7 @@ function setTaskModule(name) {
     p.classList.toggle('hidden', p.dataset.taskpane !== taskModule)
   }
   if (taskModule === 'upload') reloadUploadHistory().catch(() => {})
+  applyTaskFilter(taskModule)
   updateTaskBadge()
 }
 
@@ -491,6 +543,7 @@ function setTaskRemove(ref) {
 function markTaskDone(ref, res) {
   ref.live = false
   ref.percent = 100
+  applyTaskFilter('download')
   if (res.canceled) {
     ref.bar.classList.add('fail')
     ref.pct.textContent = '已取消'
@@ -516,6 +569,7 @@ function markTaskDone(ref, res) {
 function markTaskFailed(ref, err) {
   ref.live = false
   ref.percent = 100
+  applyTaskFilter('download')
   ref.bar.classList.add('fail')
   ref.fill.style.width = '100%'
   ref.pct.textContent = '失败'
@@ -537,7 +591,8 @@ function closeTaskModal() {
   $('taskToggle').classList.remove('active')
 }
 
-async function clearTaskHistory() {
+async function clearTaskRecords() {
+  if (taskModule === 'upload') return clearUploadHistory()
   if (!window.confirm('清除已完成的下载记录？进行中的任务不会受影响。')) return
   const btn = $('taskClear')
   btn.disabled = true
@@ -549,8 +604,33 @@ async function clearTaskHistory() {
       tasks.delete(id)
     }
     refreshTaskEmpty()
+    applyTaskFilter('download')
     updateTaskBadge()
     updateOverallProgress()
+    updateTopbarStatus()
+  } catch (err) {
+    window.alert('清除失败：' + humanizeError(err.message))
+  } finally {
+    btn.disabled = false
+  }
+}
+
+async function clearUploadHistory() {
+  if (!window.confirm('清除已上传的记录？上传任务本身和云端文件不会受影响。')) return
+  const btn = $('taskClear')
+  btn.disabled = true
+  try {
+    await window.api.clearUploads()
+    for (const [key, ref] of [...uploadEntries.entries()]) {
+      if (ref.live) continue
+      ref.el.remove()
+      uploadEntries.delete(key)
+    }
+    refreshUploadEmpty()
+    renderUploadHistory()
+    applyTaskFilter('upload')
+    updateTaskBadge()
+    updateUploadOverall()
     updateTopbarStatus()
   } catch (err) {
     window.alert('清除失败：' + humanizeError(err.message))
@@ -608,8 +688,10 @@ function addTask(id, title, history = false) {
     group: history ? 0 : taskGroup,
     percent: 0
   }
+  if (history) el.classList.add('task-history-item')
   tasks.set(id, ref)
   refreshTaskEmpty()
+  applyTaskFilter('download')
   updateTaskBadge()
   updateOverallProgress()
   updateTopbarStatus()
@@ -659,6 +741,7 @@ async function loadHistory() {
     for (const t of list.slice().reverse().slice(-20)) renderHistoryItem(t)
   } catch (_) { /* 历史读不到不影响下载 */ } finally {
     refreshTaskEmpty()
+    applyTaskFilter('download')
     updateTaskBadge()
     updateOverallProgress()
     updateTopbarStatus()
@@ -1201,13 +1284,23 @@ function renderSubItems() {
     const row = createVideoRow(v, updateSubSelection, (video) => {
       ignoreVideos(subCompare.subscription.key, [video], false)
     })
-    if (v.uploaded || v.downloaded) {
-      row.classList.add(v.uploaded ? 'uploaded' : 'downloaded')
-      const badge = document.createElement('span')
-      badge.className = v.uploaded ? 'up-uploaded' : 'up-downloaded'
-      badge.textContent = v.uploaded ? '已上传' : '已下载'
-      if (!v.uploaded && v.localPath) badge.title = v.localPath
-      row.querySelector('.up-meta').appendChild(badge)
+    if (v.downloaded || v.uploaded) {
+      if (v.downloaded) row.classList.add('downloaded')
+      if (v.uploaded) row.classList.add('uploaded')
+      const meta = row.querySelector('.up-meta')
+      if (v.downloaded) {
+        const badge = document.createElement('span')
+        badge.className = 'up-downloaded'
+        badge.textContent = '已下载'
+        if (v.localPath) badge.title = v.localPath
+        meta.appendChild(badge)
+      }
+      if (v.uploaded) {
+        const badge = document.createElement('span')
+        badge.className = 'up-uploaded'
+        badge.textContent = '已上传'
+        meta.appendChild(badge)
+      }
     }
     frag.appendChild(row)
   }
@@ -2392,7 +2485,16 @@ $('filterModal').addEventListener('click', (e) => {
 
 $('taskToggle').addEventListener('click', openTaskModal)
 $('taskClose').addEventListener('click', closeTaskModal)
-$('taskClear').addEventListener('click', clearTaskHistory)
+$('taskClear').addEventListener('click', clearTaskRecords)
+
+for (const btn of document.querySelectorAll('.task-filter-btn')) {
+  btn.addEventListener('click', () => {
+    const pane = btn.closest('.task-pane')
+    const mod = pane ? pane.dataset.taskpane : 'download'
+    taskFilters[mod] = btn.dataset.taskfilter || 'all'
+    applyTaskFilter(mod)
+  })
+}
 for (const btn of document.querySelectorAll('.task-rail-btn')) {
   btn.addEventListener('click', () => setTaskModule(btn.dataset.taskmodule))
 }

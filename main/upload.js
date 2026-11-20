@@ -219,6 +219,19 @@ async function uploadedNames(subKey) {
   return names
 }
 
+// 清除上传历史：只清掉每个任务的上次结果，任务配置和云端文件都不动
+function clearHistory() {
+  const l = list()
+  let changed = 0
+  for (const t of l) {
+    if (!t.last) continue
+    t.last = null
+    changed++
+  }
+  if (changed) saveAll(l)
+  return changed
+}
+
 module.exports = {
-  list, save, remove, updateTask, candidates, runTask, autoAfterDownload, autoAll, uploadedNames
+  list, save, remove, updateTask, candidates, runTask, autoAfterDownload, autoAll, uploadedNames, clearHistory
 }

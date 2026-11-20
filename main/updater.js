@@ -12,7 +12,9 @@ const ASAR_REL = 'release/app.asar'
 const TIMEOUT = 15000
 const SOURCES = [
   { id: 'raw', base: `https://raw.githubusercontent.com/${REPO}/${BRANCH}` },
-  { id: 'jsdelivr', base: `https://cdn.jsdelivr.net/gh/${REPO}@${BRANCH}` }
+  { id: 'github', base: `https://github.com/${REPO}/raw/${BRANCH}` },
+  { id: 'jsdelivr', base: `https://cdn.jsdelivr.net/gh/${REPO}@${BRANCH}` },
+  { id: 'api', api: `https://api.github.com/repos/${REPO}/contents/${MANIFEST}?ref=${BRANCH}` }
 ]
 
 let lastState = null
@@ -34,14 +36,15 @@ function compareVersion(a, b) {
 async function request(url, kind) {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT)
+  const headers = { 'Cache-Control': 'no-cache', Pragma: 'no-cache' }
   try {
     let res
     try {
-      // Electron 的 net.fetch 会走系统代理，优先使用
-      res = await net.fetch(url, { signal: ctrl.signal })
+      // Electron 的 net.fetch 会走系统代理，优先使用；no-store 避免 CDN/Chromium 旧缓存
+      res = await net.fetch(url, { signal: ctrl.signal, cache: 'no-store', headers })
     } catch (_) {
       // 兜底：本机/直连网络下用 Node fetch
-      res = await fetch(url, { signal: ctrl.signal })
+      res = await fetch(url, { signal: ctrl.signal, headers })
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     if (kind === 'buffer') return Buffer.from(await res.arrayBuffer())
@@ -52,19 +55,37 @@ async function request(url, kind) {
   }
 }
 
-async function fetchManifest() {
-  let lastErr = null
-  for (const src of sources()) {
-    try {
-      const text = await request(`${src.base}/${MANIFEST}?t=${Date.now()}`, 'text')
-      const manifest = JSON.parse(text)
-      if (!manifest || !manifest.version) throw new Error('version.json 缺少 version')
-      return { manifest, base: src.base, source: src.id }
-    } catch (err) {
-      lastErr = err
-    }
+async function fetchSource(src) {
+  if (src.api) {
+    const j = await request(`${src.api}&t=${Date.now()}`, 'json')
+    if (!j || !j.content) throw new Error('GitHub API 清单为空')
+    const text = Buffer.from(String(j.content).replace(/\s+/g, ''), 'base64').toString('utf8')
+    const manifest = JSON.parse(text)
+    if (!manifest || !manifest.version) throw new Error('version.json 缺少 version')
+    return { manifest, base: null, source: src.id }
   }
-  throw new Error('无法获取更新信息：' + (lastErr ? lastErr.message : '网络错误'))
+  const text = await request(`${src.base}/${MANIFEST}?t=${Date.now()}`, 'text')
+  const manifest = JSON.parse(text)
+  if (!manifest || !manifest.version) throw new Error('version.json 缺少 version')
+  return { manifest, base: src.base, source: src.id }
+}
+
+// 并行拉所有源并取最高版本：raw 正常时用 raw，某个 CDN 还缓存着旧版也不会把结果压回旧版
+async function fetchManifest() {
+  const results = await Promise.all(sources().map(async (src) => {
+    try {
+      return await fetchSource(src)
+    } catch (err) {
+      return { source: src.id, error: err }
+    }
+  }))
+  const usable = results.filter((r) => r && r.manifest)
+  if (!usable.length) {
+    const detail = results.map((r) => `${r.source}:${r.error ? r.error.message : '未知错误'}`).join(' | ')
+    throw new Error('无法获取更新信息：' + detail)
+  }
+  usable.sort((a, b) => compareVersion(b.manifest.version, a.manifest.version))
+  return usable[0]
 }
 
 function publicState(st) {
@@ -185,7 +206,9 @@ async function installUpdate() {
   const expected = String(manifest.sha256 || '').trim().toLowerCase()
   if (!expected) throw new Error('更新清单缺少 sha256，已取消下载')
 
-  const bases = [lastState.base, ...sources().map((s) => s.base)].filter((v, i, a) => a.indexOf(v) === i)
+  const bases = [lastState.base, ...sources().map((s) => s.base)]
+    .filter(Boolean)
+    .filter((v, i, a) => a.indexOf(v) === i)
   let buf = null
   let lastErr = null
   for (const base of bases) {

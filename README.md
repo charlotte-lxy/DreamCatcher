@@ -47,6 +47,9 @@ npm run pack                     # 免安装目录（打包后自动修正 exe �
 npm run pack:zip                 # 便携 zip（同上）
 ```
 
+发版时除 `release/app.asar` 外，再复制一份 `release/app-<version>.asar`，并让 `version.json`
+的 `asar` 指向这个版本化文件，避免 CDN 缓存旧更新包。
+
 需要自备 `bin/yt-dlp.exe` 与 `bin/ffmpeg.exe`：
 
 - yt-dlp: https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe

@@ -609,7 +609,7 @@ function registerIpc() {
   ipcMain.handle('update:check', async () => {
     try {
       const st = await updater.checkForUpdate()
-      log(`检查更新: 本地 ${st.localVersion} 远端 ${st.remoteVersion}${st.updateAvailable ? ' 有更新' : ' 已最新'}`)
+      log(`检查更新: 本地 ${st.localVersion} 远端 ${st.remoteVersion}${st.updateAvailable ? ' 有更新' : ' 已最新'} 来源=${st.source || '-'}`)
       return st
     } catch (err) {
       log('检查更新失败: ' + err.message)

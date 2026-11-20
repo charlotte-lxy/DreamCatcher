@@ -1,10 +1,19 @@
 {
-  "version": "0.5.0",
+  "version": "0.5.1",
   "date": "2026-11-20",
-  "asar": "release/app.asar",
-  "sha256": "6dfd184e765da1ad5c4bf0b54cc9ed394e9a3aef8fae5bfcb9b8f26d3143c6b6",
-  "size": 214010,
+  "asar": "release/app-0.5.1.asar",
+  "sha256": "4f62c373792d7ddbe80eafd9f8cb884ece788e13b31a1997ac6e0082d3283b43",
+  "size": 215308,
   "releases": [
+    {
+      "version": "0.5.1",
+      "date": "2026-11-20",
+      "items": [
+        "修复更新检查可能命中 CDN 旧缓存、看不到新版本的问题",
+        "更新清单改为并行查询 raw/GitHub/jsDelivr/GitHub API，取最高版本",
+        "请求增加 no-store；更新包改用版本化文件名，避免旧缓存影响"
+      ]
+    },
     {
       "version": "0.5.0",
       "date": "2026-11-20",

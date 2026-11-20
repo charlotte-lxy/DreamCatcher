@@ -60,13 +60,14 @@ try { fs.mkdirSync(COOKIE_DIR, { recursive: true }) } catch (_) { /* 由 exportC
 let win = null
 let settings = store.read('settings.json', store.DEFAULTS)
 let history = store.readAny('tasks.json', []).map((t) => (t.status === 'running' ? Object.assign({}, t, { status: 'interrupted' }) : t))
-let subscriptions = store.readAny('subscriptions.json', []).filter((s) => s && typeof s.mid === 'string' && s.mid)
+let subscriptions = store.readAny('subscriptions.json', []).map(normalizeSubscription).filter(Boolean)
 let tagStore = store.read('tags.json', {})
 const HISTORY_LIMIT = 50
 const tasks = new Map()
 const queue = []
 let active = 0
 saveHistory()
+saveSubscriptions()
 
 function log(...parts) {
   const line = `[${new Date().toISOString()}] ${parts.join(' ')}`
@@ -91,15 +92,159 @@ function saveSubscriptions() {
   store.write('subscriptions.json', subscriptions)
 }
 
-function sendSubProgress(p) {
-  if (win && !win.isDestroyed()) win.webContents.send('subs:progress', p)
+function subKey(site, type, id) {
+  return `${site}:${type}:${id}`
 }
 
-// 拉取网页清单并和下载目录比对；订阅的添加与检查共用
-async function fetchComparison(url) {
-  const list = await bili.listUpVideos(url, sendSubProgress)
-  const local = await subs.scanLocalBvids(effectiveDownloadDir())
-  return { list, comparison: subs.buildComparison(list.videos, local) }
+// 兼容旧版只保存了 mid 的 B 站订阅；Hanime 订阅按播放清单/上传者区分
+function normalizeSubscription(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const site = raw.site === 'hanime' ? 'hanime' : 'bilibili'
+  const type = raw.type === 'playlist' || raw.type === 'uploader'
+    ? raw.type
+    : (site === 'bilibili' ? 'up' : 'uploader')
+  const id = String(site === 'bilibili'
+    ? (raw.mid || raw.id || '')
+    : (raw.listId || raw.userId || raw.id || '')).trim()
+  if (!id) return null
+  const ignored = (Array.isArray(raw.ignored) ? raw.ignored : [])
+    .filter((v) => v && v.id)
+    .map((v) => ({
+      id: String(v.id),
+      title: String(v.title || v.id),
+      created: Number(v.created) || 0,
+      dateText: String(v.dateText || ''),
+      thumb: String(v.thumb || ''),
+      url: String(v.url || ''),
+      site,
+      ignoredAt: Number(v.ignoredAt) || Date.now()
+    }))
+  const filter = raw.filter === 'normal' || raw.filter === 'charging' ? raw.filter : 'all'
+  const url = raw.url || (site === 'bilibili'
+    ? `https://space.bilibili.com/${id}`
+    : type === 'playlist' ? `https://hanime1.me/playlist?list=${id}&sort=latest` : `https://hanime1.me/user/${id}`)
+  return Object.assign({}, raw, {
+    site,
+    type,
+    id,
+    key: raw.key || subKey(site, type, id),
+    url,
+    filter: site === 'bilibili' ? filter : 'all',
+    ignored,
+    listId: site === 'hanime' && type === 'playlist' ? id : String(raw.listId || ''),
+    userId: site === 'hanime' && type === 'uploader' ? id : String(raw.userId || ''),
+    name: String(raw.name || (site === 'bilibili' ? `UP ${id}` : `Hanime ${id}`)),
+    face: String(raw.face || ''),
+    lastCheckAt: Number(raw.lastCheckAt) || 0,
+    lastCount: Number(raw.lastCount) || 0,
+    lastMissing: Number(raw.lastMissing) || 0
+  })
+}
+
+function findSubscription(key) {
+  if (!key) return null
+  const k = String(key)
+  return subscriptions.find((s) => s.key === k) ||
+    subscriptions.find((s) => s.site === 'bilibili' && String(s.mid) === k) ||
+    subscriptions.find((s) => s.site === 'hanime' && String(s.id) === k) ||
+    null
+}
+
+function upsertSubscription(rec) {
+  const i = subscriptions.findIndex((s) => s.key === rec.key)
+  if (i >= 0) subscriptions[i] = Object.assign({}, subscriptions[i], rec)
+  else subscriptions.unshift(rec)
+  saveSubscriptions()
+  return subscriptions.find((s) => s.key === rec.key)
+}
+
+function applySubFilter(videos, sub) {
+  const list = videos || []
+  if (!sub || sub.site !== 'bilibili') return list
+  return subs.filterVideos(list, sub.filter)
+}
+
+function buildSubComparison(sub, videos, localMap) {
+  const filtered = applySubFilter(videos, sub)
+  const ignored = new Set((sub.ignored || []).map((v) => String(v.id)))
+  const visible = filtered.filter((v) => !ignored.has(String(v.id)))
+  const cmp = subs.buildComparison(visible, localMap || new Map())
+  return Object.assign(cmp, { ignoredCount: filtered.length - visible.length, filteredCount: filtered.length })
+}
+
+async function listSubscriptionVideos(sub, onProgress) {
+  if (sub.site === 'hanime') {
+    const proxyUrl = await proxyFor(sub.url)
+    return hanime.listSubscription(sub.url, { proxy: proxyUrl, onProgress })
+  }
+  return bili.listUpVideos(sub.url || `https://space.bilibili.com/${sub.mid}`, (p) => {
+    if (onProgress) onProgress(Object.assign({ site: 'bilibili' }, p))
+  })
+}
+
+function sendSummaryProgress(p) {
+  if (win && !win.isDestroyed()) win.webContents.send('subs:summary:progress', p)
+}
+
+let summaryRunning = false
+async function buildUpdateSummary() {
+  if (summaryRunning) throw new Error('更新汇总正在进行中，请稍候')
+  summaryRunning = true
+  const groups = []
+  const errors = []
+  const local = await subs.scanLocalMedia(effectiveDownloadDir())
+  const list = subscriptions.slice()
+  try {
+    for (let i = 0; i < list.length; i++) {
+      const sub = list[i]
+      sendSummaryProgress({ done: i, total: list.length, current: sub.name })
+      try {
+        const r = await listSubscriptionVideos(sub)
+        const filtered = applySubFilter(r.videos || [], sub)
+        const localMap = sub.site === 'hanime' ? local.hanime : local.bilibili
+        const ignored = new Set((sub.ignored || []).map((v) => String(v.id)))
+        let cutoff = -1
+        for (let j = 0; j < filtered.length; j++) {
+          if (localMap.has(String(filtered[j].id))) {
+            cutoff = j
+            break
+          }
+        }
+        const base = cutoff >= 0 ? filtered.slice(0, cutoff) : filtered
+        const videos = base
+          .filter((v) => !localMap.has(String(v.id)) && !ignored.has(String(v.id)))
+          .map((v) => Object.assign({}, v, { selected: true }))
+        if (videos.length) {
+          groups.push({
+            key: sub.key,
+            site: sub.site,
+            type: sub.type,
+            name: sub.name,
+            face: sub.face,
+            filter: sub.filter,
+            videos,
+            hasLocal: cutoff >= 0,
+            latestLocalTitle: cutoff >= 0 ? filtered[cutoff].title : '',
+            latestLocalDateText: cutoff >= 0 ? (filtered[cutoff].dateText || '') : '',
+            latestLocalCreated: cutoff >= 0 ? (Number(filtered[cutoff].created) || 0) : 0
+          })
+        }
+      } catch (err) {
+        errors.push({ key: sub.key, name: sub.name, error: err.message })
+        log(`更新汇总失败 ${sub.name}: ${err.message}`)
+      }
+      await sleep(250)
+    }
+  } finally {
+    summaryRunning = false
+    sendSummaryProgress({ done: list.length, total: list.length })
+  }
+  log(`更新汇总完成: ${groups.length} 个有更新, ${errors.length} 个失败`)
+  return { groups, errors, checkedAt: Date.now() }
+}
+
+function sendSubProgress(p) {
+  if (win && !win.isDestroyed()) win.webContents.send('subs:progress', p)
 }
 
 function saveTagStore() {
@@ -568,7 +713,7 @@ function registerIpc() {
   ipcMain.handle('subs:list', () => subscriptions)
 
   ipcMain.handle('subs:add', async (_e, url) => {
-    const { list, comparison } = await fetchComparison(url)
+    const list = await bili.listUpVideos(url, sendSubProgress)
     let profile = { name: '', face: '' }
     try {
       profile = await bili.fetchUpProfile(list.mid)
@@ -576,61 +721,143 @@ function registerIpc() {
       log(`获取 UP 资料失败: ${err.message}`)
     }
     const name = profile.name || list.author || `UP ${list.mid}`
-    const rec = {
+    const rec = normalizeSubscription({
+      site: 'bilibili',
+      type: 'up',
       mid: list.mid,
       name,
       face: profile.face,
+      filter: 'all',
+      ignored: [],
       lastCheckAt: Date.now(),
-      lastCount: comparison.videos.length,
-      lastMissing: comparison.missing
-    }
-    const i = subscriptions.findIndex((s) => s.mid === list.mid)
-    if (i >= 0) {
-      subscriptions[i] = Object.assign({}, subscriptions[i], rec)
-    } else {
-      subscriptions.unshift(Object.assign({ addedAt: Date.now() }, rec))
-    }
-    saveSubscriptions()
+      addedAt: Date.now()
+    })
+    const prev = findSubscription(rec.key)
+    if (prev) Object.assign(rec, { filter: prev.filter, ignored: prev.ignored, addedAt: prev.addedAt })
+    const local = await subs.scanLocalMedia(effectiveDownloadDir())
+    const comparison = buildSubComparison(rec, list.videos, local.bilibili)
+    rec.lastCount = comparison.videos.length
+    rec.lastMissing = comparison.missing
+    const saved = upsertSubscription(rec)
     log(`订阅 UP: mid=${list.mid} name=${name} 共 ${comparison.videos.length} 个，待下载 ${comparison.missing}`)
-    return Object.assign({ subscription: subscriptions.find((s) => s.mid === list.mid) }, comparison)
+    return Object.assign({ subscription: saved }, comparison)
   })
 
-  ipcMain.handle('subs:check', async (_e, mid) => {
-    const sub = subscriptions.find((s) => s.mid === String(mid))
+  ipcMain.handle('subs:addHanime', async (_e, url) => {
+    const proxyUrl = await proxyFor(url)
+    const info = await hanime.listSubscription(url, { proxy: proxyUrl, onProgress: sendSubProgress })
+    const rec = normalizeSubscription({
+      site: 'hanime',
+      type: info.type,
+      listId: info.type === 'playlist' ? info.id : '',
+      userId: info.type === 'uploader' ? info.id : '',
+      url: info.url,
+      name: info.name,
+      face: info.face,
+      filter: 'all',
+      ignored: [],
+      lastCheckAt: Date.now(),
+      addedAt: Date.now()
+    })
+    const prev = findSubscription(rec.key)
+    if (prev) Object.assign(rec, { ignored: prev.ignored, addedAt: prev.addedAt })
+    const local = await subs.scanLocalMedia(effectiveDownloadDir())
+    const comparison = buildSubComparison(rec, info.videos, local.hanime)
+    rec.lastCount = comparison.videos.length
+    rec.lastMissing = comparison.missing
+    const saved = upsertSubscription(rec)
+    log(`订阅 Hanime: ${info.type}=${info.id} name=${info.name} 共 ${comparison.videos.length} 个，待下载 ${comparison.missing}`)
+    return Object.assign({ subscription: saved }, comparison)
+  })
+
+  ipcMain.handle('subs:check', async (_e, key) => {
+    const sub = findSubscription(key)
     if (!sub) throw new Error('订阅不存在，可能已被删除')
-    const { list, comparison } = await fetchComparison(`https://space.bilibili.com/${sub.mid}`)
+    const r = await listSubscriptionVideos(sub, sendSubProgress)
+    const local = await subs.scanLocalMedia(effectiveDownloadDir())
+    const localMap = sub.site === 'hanime' ? local.hanime : local.bilibili
+    const comparison = buildSubComparison(sub, r.videos, localMap)
     sub.lastCheckAt = Date.now()
     sub.lastCount = comparison.videos.length
     sub.lastMissing = comparison.missing
-    if (!sub.name) sub.name = list.author || `UP ${sub.mid}`
+    if (!sub.name && r.author) sub.name = r.author
     saveSubscriptions()
-    log(`检查订阅: mid=${sub.mid} 共 ${comparison.videos.length} 个，待下载 ${comparison.missing}`)
+    log(`检查订阅: ${sub.site}:${sub.key} 共 ${comparison.videos.length} 个，待下载 ${comparison.missing}`)
     return Object.assign({ subscription: sub }, comparison)
   })
 
-  ipcMain.handle('subs:remove', (_e, mid) => {
-    subscriptions = subscriptions.filter((s) => s.mid !== String(mid))
+  ipcMain.handle('subs:remove', (_e, key) => {
+    const sub = findSubscription(key)
+    if (!sub) return subscriptions
+    subscriptions = subscriptions.filter((s) => s.key !== sub.key)
     saveSubscriptions()
-    log(`取消订阅: mid=${mid}`)
+    log(`取消订阅: ${sub.key}`)
     return subscriptions
   })
 
   // 下载完成后只重扫本地，不重复请求网页清单
   ipcMain.handle('subs:compare', async (_e, payload) => {
-    const mid = String((payload && payload.mid) || '')
+    const sub = findSubscription(payload && (payload.key || payload.mid))
     const ids = Array.isArray(payload && payload.ids) ? payload.ids.map(String) : []
-    const local = await subs.scanLocalBvids(effectiveDownloadDir())
+    const local = await subs.scanLocalMedia(effectiveDownloadDir())
+    const localMap = sub && sub.site === 'hanime' ? local.hanime : local.bilibili
     const map = {}
-    for (const id of ids) if (local.has(id)) map[id] = local.get(id)
+    for (const id of ids) if (localMap.has(id)) map[id] = localMap.get(id)
     const downloaded = Object.keys(map).length
-    const sub = subscriptions.find((s) => s.mid === mid)
     if (sub) {
-      sub.lastCount = ids.length
       sub.lastMissing = ids.length - downloaded
       saveSubscriptions()
     }
     return { map, subscription: sub || null, downloaded, missing: ids.length - downloaded }
   })
+
+  ipcMain.handle('subs:settings', (_e, payload) => {
+    const sub = findSubscription(payload && payload.key)
+    if (!sub) throw new Error('订阅不存在，可能已被删除')
+    if (sub.site === 'bilibili' && ['all', 'normal', 'charging'].includes(payload.filter)) {
+      sub.filter = payload.filter
+    }
+    saveSubscriptions()
+    log(`订阅设置: ${sub.key} filter=${sub.filter} ignored=${sub.ignored.length}`)
+    return sub
+  })
+
+  ipcMain.handle('subs:ignore', (_e, payload) => {
+    const sub = findSubscription(payload && payload.key)
+    if (!sub) throw new Error('订阅不存在，可能已被删除')
+    const videos = Array.isArray(payload.videos) ? payload.videos : []
+    const have = new Set(sub.ignored.map((v) => String(v.id)))
+    for (const v of videos) {
+      const id = String((v && v.id) || '')
+      if (!id || have.has(id)) continue
+      have.add(id)
+      sub.ignored.push({
+        id,
+        title: String(v.title || id),
+        created: Number(v.created) || 0,
+        dateText: String(v.dateText || ''),
+        thumb: String(v.thumb || ''),
+        url: String(v.url || ''),
+        site: sub.site,
+        ignoredAt: Date.now()
+      })
+    }
+    saveSubscriptions()
+    log(`忽略更新: ${sub.key} +${videos.length}，共 ${sub.ignored.length}`)
+    return sub
+  })
+
+  ipcMain.handle('subs:unignore', (_e, payload) => {
+    const sub = findSubscription(payload && payload.key)
+    if (!sub) throw new Error('订阅不存在，可能已被删除')
+    const ids = new Set((Array.isArray(payload.ids) ? payload.ids : []).map(String))
+    sub.ignored = sub.ignored.filter((v) => !ids.has(String(v.id)))
+    saveSubscriptions()
+    log(`移除忽略: ${sub.key} 剩余 ${sub.ignored.length}`)
+    return sub
+  })
+
+  ipcMain.handle('subs:summary', () => buildUpdateSummary())
 
   ipcMain.handle('video:download', async (_e, payload) => {
     const id = payload.id || Date.now().toString(36)

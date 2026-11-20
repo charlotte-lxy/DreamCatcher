@@ -131,15 +131,52 @@ test('scanLocalBvids: 递归扫描音视频，忽略非媒体与无 BV 号文件
     fs.writeFileSync(path.join(root, 'UP', 'x_2026-01-01_标题 [BV1xx411c7mD].mp4'), '')
     fs.writeFileSync(path.join(root, 'UP', 'y [BV1yy411c7mE].m4a'), '')
     fs.writeFileSync(path.join(root, 'z [BV1zz411c7mF].txt'), '')
+    fs.writeFileSync(path.join(root, 'artist_2026-01-01_标题 [409270].mp4'), '')
     fs.writeFileSync(path.join(root, 'no-id.mp4'), '')
     const map = await sub.scanLocalBvids(root)
     assert.strictEqual(map.size, 2)
     assert.ok(map.has('BV1xx411c7mD'))
     assert.ok(map.has('BV1yy411c7mE'))
     assert.ok(!map.has('BV1zz411c7mF'))
+    const media = await sub.scanLocalMedia(root)
+    assert.strictEqual(media.bilibili.size, 2)
+    assert.ok(media.hanime.has('409270'))
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('filterVideos: B 站普通/充电/全部', () => {
+  const sub = require('../main/subscription')
+  const videos = [{ id: 'a', charging: false }, { id: 'b', charging: true }]
+  assert.strictEqual(sub.filterVideos(videos, 'all').length, 2)
+  assert.deepStrictEqual(sub.filterVideos(videos, 'normal').map((v) => v.id), ['a'])
+  assert.deepStrictEqual(sub.filterVideos(videos, 'charging').map((v) => v.id), ['b'])
+})
+
+test('hanime: 播放清单/上传者卡片与订阅链接', () => {
+  const hanime = require('../main/hanime')
+  const html = `
+    <div class="user-tab-item-wrapper">
+      <div class="video-item-container" title="测试标题">
+        <a href="https://hanime1.me/watch?v=123456" class="video-link">
+          <img class="main-thumb" src="https://example.com/t.jpg">
+          <div class="duration">01:02</div>
+          <div class="title">测试标题</div>
+        </a>
+        <span class="subtitle-time">• 2個月前</span>
+      </div>
+    </div>`
+  const list = hanime.parseListCards(html, 'artist')
+  assert.strictEqual(list.length, 1)
+  assert.strictEqual(list[0].id, '123456')
+  assert.strictEqual(list[0].title, '测试标题')
+  assert.strictEqual(list[0].duration, 62)
+  assert.strictEqual(list[0].dateText, '2個月前')
+  assert.deepStrictEqual(hanime.parseSubscriptionUrl('https://hanime1.me/playlist?list=985664&sort=latest'), {
+    type: 'playlist', id: '985664', url: 'https://hanime1.me/playlist?list=985664&sort=latest'
+  })
+  assert.strictEqual(hanime.parseSubscriptionUrl('https://hanime1.me/user/367303').type, 'uploader')
 })
 
 test('signedSearchUrl: 充电专属参数参与 WBI 签名', () => {

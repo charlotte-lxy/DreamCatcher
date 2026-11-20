@@ -57,6 +57,7 @@ function decodeEntities(s) {
     .replace(/&#39;|&apos;/g, "'")
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
     .replace(/&#(\d+);/g, (_m, n) => String.fromCodePoint(Number(n)))
 }
 
@@ -219,6 +220,209 @@ async function fetchTags(input, opts = {}) {
   return info.tags
 }
 
+// ---------- 订阅：播放清单 / 上传者 ----------
+
+function parseLength(value) {
+  const parts = String(value || '').trim().split(':')
+  if (parts.length < 2 || parts.some((p) => !/^\d+$/.test(p))) return 0
+  return parts.reduce((acc, p) => acc * 60 + Number(p), 0)
+}
+
+function relativeToMs(text, now = Date.now()) {
+  const m = /(\d+)\s*(分鐘|分钟|小時|小时|天|週|周|個月|个月|年)前/.exec(String(text || ''))
+  if (!m) return now
+  const n = Number(m[1]) || 0
+  const unit = m[2]
+  let ms = 0
+  if (/分鐘|分钟/.test(unit)) ms = n * 60e3
+  else if (/小時|小时/.test(unit)) ms = n * 3600e3
+  else if (unit === '天') ms = n * 86400e3
+  else if (/週|周/.test(unit)) ms = n * 7 * 86400e3
+  else if (/個月|个月/.test(unit)) ms = n * 30 * 86400e3
+  else if (unit === '年') ms = n * 365 * 86400e3
+  return now - ms
+}
+
+function firstMatch(re, s) {
+  const m = re.exec(s)
+  return m ? m[1] : ''
+}
+
+function parseCardDate(text) {
+  const raw = String(text || '')
+  let m = /<span class="subtitle-time"[^>]*>([\s\S]*?)<\/span>/i.exec(raw)
+  let s = m ? stripTags(m[1]) : ''
+  if (!s) {
+    m = /<div class="meta-stats">[\s\S]*?<span>([^<]*前)<\/span>/i.exec(raw)
+    s = m ? stripTags(m[1]) : ''
+  }
+  if (!s) {
+    m = /(\d+\s*(?:分鐘|分钟|小時|小时|天|週|周|個月|个月|年)前)/.exec(stripTags(raw))
+    s = m ? m[1] : ''
+  }
+  return s.replace(/^[•·\s]+/, '').trim()
+}
+
+function parseCardTitle(block) {
+  let m = /<h4[^>]*class="video-title"[^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i.exec(block)
+  if (m) return stripTags(m[1])
+  m = /<div[^>]*class="title"[^>]*>([\s\S]*?)<\/div>/i.exec(block)
+  if (m) return stripTags(m[1])
+  m = /<div[^>]*title="([^"]+)"[^>]*class="video-item-container"/i.exec(block)
+  return m ? stripTags(m[1]) : ''
+}
+
+function imgSrcByClass(text, cls) {
+  const tags = String(text).match(/<img\b[^>]*>/gi) || []
+  for (const tag of tags) {
+    if (!new RegExp(`class="[^"]*${cls}`, 'i').test(tag)) continue
+    const m = /src="([^"]+)"/i.exec(tag)
+    if (m) return decodeEntities(m[1])
+  }
+  return ''
+}
+
+function parseCardThumb(block) {
+  return imgSrcByClass(block, 'main-thumb')
+}
+
+function parseCardUploader(block, fallback) {
+  let m = /<div class="meta-author">[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i.exec(block)
+  if (!m) m = /<div class="subtitle">[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i.exec(block)
+  return m ? stripTags(m[1]) : (fallback || '')
+}
+
+// 清单页和上传者页的卡片都包在 user-tab-item-wrapper 里
+function parseListCards(html, fallbackUploader) {
+  const out = []
+  const seen = new Set()
+  const blocks = String(html).split(/<div class="user-tab-item-wrapper"/i).slice(1)
+  const now = Date.now()
+  for (const block of blocks) {
+    const m = /<a[^>]+href="https?:\/\/hanime1\.me\/watch\?v=(\d+)[^"]*"/i.exec(block)
+    if (!m) continue
+    const id = m[1]
+    if (seen.has(id)) continue
+    const title = parseCardTitle(block)
+    if (!title) continue
+    seen.add(id)
+    const dateText = parseCardDate(block)
+    const durationText = firstMatch(/<div[^>]*class="duration"[^>]*>([\s\S]*?)<\/div>/i, block)
+    out.push({
+      id,
+      url: `https://hanime1.me/watch?v=${id}`,
+      title,
+      thumb: parseCardThumb(block),
+      duration: parseLength(stripTags(durationText)),
+      created: relativeToMs(dateText, now),
+      dateText,
+      uploader: parseCardUploader(block, fallbackUploader),
+      charging: false
+    })
+  }
+  return out
+}
+
+function parseSubscriptionUrl(input) {
+  let u
+  try {
+    u = new URL(String(input || '').trim())
+  } catch (_) {
+    return null
+  }
+  if (!/^https?:$/.test(u.protocol) || !/(^|\.)hanime1\.me$/i.test(u.hostname)) return null
+  const list = u.searchParams.get('list')
+  if (list && /^\d+$/.test(list)) {
+    return { type: 'playlist', id: list, url: `https://hanime1.me/playlist?list=${list}&sort=latest` }
+  }
+  const m = /^\/user\/(\d+)(?:\/|$)/.exec(u.pathname)
+  if (m) return { type: 'uploader', id: m[1], url: `https://hanime1.me/user/${m[1]}` }
+  return null
+}
+
+function maxPage(html) {
+  let max = 1
+  const re = /[?&]page=(\d+)/g
+  let m
+  while ((m = re.exec(html))) max = Math.max(max, Number(m[1]))
+  return Math.min(max, 50)
+}
+
+function dedupeVideos(list) {
+  const seen = new Set()
+  return list.filter((v) => {
+    if (!v || !v.id || seen.has(v.id)) return false
+    seen.add(v.id)
+    return true
+  })
+}
+
+async function listPlaylist(input, opts = {}) {
+  const meta = parseSubscriptionUrl(input)
+  if (!meta || meta.type !== 'playlist') throw new Error('需要 Hanime 播放清单链接（.../playlist?list=...）')
+  const html = await fetchText(`https://hanime1.me/playlist?list=${meta.id}&sort=latest`, { proxy: opts.proxy, referer: 'https://hanime1.me/' })
+  const title = stripTags(firstMatch(/<h1[^>]*class="playlist-title"[^>]*>([\s\S]*?)<\/h1>/i, html))
+  const cover = imgSrcByClass(html, 'playlist-main-thumbnail')
+  const author = stripTags(firstMatch(/<div class="playlist-author-info">[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i, html))
+  let videos = parseListCards(html, author || title)
+  const pages = maxPage(html)
+  for (let page = 2; page <= pages; page++) {
+    await new Promise((r) => setTimeout(r, 180))
+    const more = await fetchText(`https://hanime1.me/playlist?list=${meta.id}&sort=latest&page=${page}`, { proxy: opts.proxy, referer: 'https://hanime1.me/' })
+    videos = videos.concat(parseListCards(more, author || title))
+    if (opts.onProgress) opts.onProgress({ loaded: videos.length, total: 0, site: 'hanime', page, pages })
+  }
+  videos = dedupeVideos(videos)
+  if (!videos.length) throw new Error('播放清单里没有找到视频')
+  if (opts.onProgress) opts.onProgress({ loaded: videos.length, total: videos.length, site: 'hanime' })
+  return {
+    site: 'hanime',
+    type: 'playlist',
+    id: meta.id,
+    url: meta.url,
+    name: title || `Hanime 清单 ${meta.id}`,
+    face: decodeEntities(cover),
+    author,
+    videos
+  }
+}
+
+async function listUploader(input, opts = {}) {
+  const meta = parseSubscriptionUrl(input)
+  if (!meta || meta.type !== 'uploader') throw new Error('需要 Hanime 上传者链接（.../user/...）')
+  const firstUrl = `https://hanime1.me/user/${meta.id}/uploaded`
+  const first = await fetchText(firstUrl, { proxy: opts.proxy, referer: `https://hanime1.me/user/${meta.id}` })
+  const name = stripTags(firstMatch(/<h1[^>]*class="profile-display-name"[^>]*>([\s\S]*?)<\/h1>/i, first))
+  const avatar = imgSrcByClass(first, 'profile-avatar') || firstMatch(/<div class="profile-avatar-wrapper">[\s\S]*?<img[^>]+src="([^"]+)"/i, first)
+  let videos = parseListCards(first, name)
+  const pages = maxPage(first)
+  if (opts.onProgress) opts.onProgress({ loaded: videos.length, total: 0, site: 'hanime', page: 1, pages })
+  for (let page = 2; page <= pages; page++) {
+    await new Promise((r) => setTimeout(r, 180))
+    const html = await fetchText(`${firstUrl}?page=${page}`, { proxy: opts.proxy, referer: firstUrl })
+    videos = videos.concat(parseListCards(html, name))
+    if (opts.onProgress) opts.onProgress({ loaded: videos.length, total: 0, site: 'hanime', page, pages })
+  }
+  videos = dedupeVideos(videos)
+  if (!videos.length) throw new Error('上传者页面里没有找到视频')
+  return {
+    site: 'hanime',
+    type: 'uploader',
+    id: meta.id,
+    url: meta.url,
+    name: name || `Hanime 上传者 ${meta.id}`,
+    face: decodeEntities(avatar),
+    author: name,
+    videos
+  }
+}
+
+async function listSubscription(input, opts = {}) {
+  const meta = parseSubscriptionUrl(input)
+  if (!meta) throw new Error('需要 Hanime 播放清单或上传者链接')
+  return meta.type === 'playlist' ? listPlaylist(input, opts) : listUploader(input, opts)
+}
+
 module.exports = {
   PARTITION,
   isUrl,
@@ -229,5 +433,10 @@ module.exports = {
   parseFormats,
   sanitizeName,
   outputPath,
-  pickFormat
+  pickFormat,
+  parseSubscriptionUrl,
+  parseListCards,
+  listPlaylist,
+  listUploader,
+  listSubscription
 }

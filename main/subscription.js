@@ -14,9 +14,10 @@ function bvidFromFilename(name) {
   return m ? m[1] : ''
 }
 
-// 递归扫描下载目录，返回 BV 号 → 本地文件路径
-async function scanLocalBvids(root) {
-  const found = new Map()
+// 递归扫描下载目录，分别返回 B 站 BV 号、Hanime 数字 ID → 本地文件路径
+async function scanLocalMedia(root) {
+  const bilibili = new Map()
+  const hanime = new Map()
   async function walk(dir, depth) {
     if (depth > 6) return
     let entries
@@ -33,12 +34,29 @@ async function scanLocalBvids(root) {
         continue
       }
       if (!MEDIA_EXT.has(path.extname(ent.name).toLowerCase())) continue
-      const id = bvidFromFilename(ent.name)
-      if (id && !found.has(id)) found.set(id, full)
+      const bvid = bvidFromFilename(ent.name)
+      if (bvid) {
+        if (!bilibili.has(bvid)) bilibili.set(bvid, full)
+        continue
+      }
+      const hm = /\[(\d{4,10})\]/.exec(ent.name)
+      if (hm && !hanime.has(hm[1])) hanime.set(hm[1], full)
     }
   }
   await walk(root, 0)
-  return found
+  return { bilibili, hanime }
+}
+
+async function scanLocalBvids(root) {
+  return (await scanLocalMedia(root)).bilibili
+}
+
+// B 站订阅的视频类型过滤；Hanime 没有普通/充电之分
+function filterVideos(videos, filter) {
+  const list = videos || []
+  if (filter === 'normal') return list.filter((v) => !v.charging)
+  if (filter === 'charging') return list.filter((v) => v.charging)
+  return list
 }
 
 // 网页清单 + 本地文件 → 比对清单；已下载的默认不勾选，但仍允许手动勾选重下
@@ -52,4 +70,4 @@ function buildComparison(videos, localMap) {
   return { videos: list, downloaded, missing: list.length - downloaded }
 }
 
-module.exports = { bvidFromFilename, scanLocalBvids, buildComparison }
+module.exports = { bvidFromFilename, scanLocalMedia, scanLocalBvids, filterVideos, buildComparison }

@@ -259,6 +259,21 @@ body {
 .sub-compare-title { color: #c7ccd5; font-size: 13px; font-weight: 600; }
 .up-item.downloaded .up-title { color: #8b929e; }
 .up-downloaded { color: #59c47a; }
+.up-ignore { flex: none; }
+
+.sub-settings-modal { width: min(680px, 100%); }
+.sub-ignore-head { display: flex; align-items: center; gap: 8px; margin: 4px 0 10px; color: #9aa1ad; font-size: 13px; }
+.sub-ignore-list { max-height: 300px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.sub-ignore-item {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 8px 10px; background: #12141a; border: 1px solid #232830; border-radius: 8px; cursor: pointer;
+}
+.sub-ignore-check { margin-top: 3px; accent-color: #7c5cff; }
+.sub-ignore-main { min-width: 0; }
+.sub-ignore-title { font-size: 13px; color: #dfe3ea; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub-ignore-meta { font-size: 11px; color: #6c7480; margin-top: 2px; }
+.summary-group .up-list { max-height: 420px; }
+.summary-group .up-toolbar .muted { max-width: 440px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- 筛选弹窗 ---------- */
 .filter-modal { width: min(520px, 100%); }

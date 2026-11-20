@@ -128,19 +128,58 @@
             <h3>已订阅 UP</h3>
             <div id="subList" class="subs"><div class="empty">还没有订阅，先粘贴主页链接添加</div></div>
           </div>
+        </div>
 
-          <div id="subCompareWrap" class="card hidden">
-            <div class="up-toolbar">
-              <span id="subCompareTitle" class="sub-compare-title">比对清单</span>
-              <span id="subCompareSummary" class="muted"></span>
-              <span class="spacer"></span>
-              <span id="subSelected" class="up-selected">已选 0</span>
-              <button id="subSelectMissing" class="btn ghost small">全选待下载</button>
-              <button id="subSelectNone" class="btn ghost small">取消选择</button>
-              <button id="subDownload" class="btn primary small" disabled>批量下载</button>
+        <div class="panel hidden" data-panel="hanime">
+          <div class="card">
+            <div class="row">
+              <input id="hnUrl" class="input" type="text" spellcheck="false"
+                     placeholder="粘贴 Hanime 播放清单或上传者链接，例如 https://hanime1.me/playlist?list=... 或 https://hanime1.me/user/..." />
+              <button id="hnAdd" class="btn primary">添加订阅</button>
             </div>
-            <div id="subItems" class="up-list"></div>
+            <div id="hnStatus" class="status"></div>
+            <div id="hnProgress" class="up-progress hidden">
+              <div class="bar"><i id="hnProgressFill"></i></div>
+              <span id="hnProgressText">已获取 0 个视频</span>
+            </div>
+            <p class="hint">支持播放清单（playlist?list=...）和上传者（user/...）两种订阅；文件名里带 Hanime 数字 ID 的视为已下载。</p>
           </div>
+
+          <div class="card">
+            <h3>已订阅 Hanime</h3>
+            <div id="hnList" class="subs"><div class="empty">还没有订阅，先粘贴播放清单或上传者链接</div></div>
+          </div>
+        </div>
+
+        <div class="panel hidden" data-panel="summary">
+          <div class="card">
+            <div class="row">
+              <h3>更新汇总</h3>
+              <span id="summaryStatus" class="muted"></span>
+              <span class="spacer"></span>
+              <button id="summaryRefresh" class="btn ghost small">刷新汇总</button>
+            </div>
+            <div id="summaryProgress" class="up-progress hidden">
+              <div class="bar"><i id="summaryProgressFill"></i></div>
+              <span id="summaryProgressText">正在检查订阅…</span>
+            </div>
+            <p class="hint">按作者分组，列出本地最新视频之后的更新；B 站按订阅设置的视频类型过滤，忽略清单不显示。</p>
+          </div>
+          <div id="summaryGroups"></div>
+        </div>
+
+        <div id="subCompareWrap" class="card hidden">
+          <div class="up-toolbar">
+            <span id="subCompareTitle" class="sub-compare-title">比对清单</span>
+            <span id="subCompareSummary" class="muted"></span>
+            <span class="spacer"></span>
+            <span id="subSelected" class="up-selected">已选 0</span>
+            <button id="subSelectMissing" class="btn ghost small">全选待下载</button>
+            <button id="subSelectNone" class="btn ghost small">取消选择</button>
+            <button id="subIgnore" class="btn ghost small" disabled>批量忽略</button>
+            <button id="subDownload" class="btn primary small" disabled>批量下载</button>
+          </div>
+          <div id="subItems" class="up-list"></div>
         </div>
       </section>
 
@@ -325,6 +364,40 @@
         </div>
         <div id="activeTasks" class="tasks"><div class="empty">还没有任务</div></div>
         <div id="tasks" class="tasks task-history"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="subSettingsModal" class="modal-mask hidden" role="dialog" aria-modal="true" aria-labelledby="subSettingsTitle">
+    <div class="modal sub-settings-modal">
+      <div class="modal-head">
+        <h2 id="subSettingsTitle">订阅设置</h2>
+        <span id="subSettingsSub" class="modal-sub"></span>
+        <button id="subSettingsClose" class="modal-close" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="subFilterRow" class="filter-row">
+          <span class="filter-label">更新范围</span>
+          <div class="filter-choices">
+            <label><input type="radio" name="subFilter" value="all" checked /> 全部视频</label>
+            <label><input type="radio" name="subFilter" value="normal" /> 仅普通视频</label>
+            <label><input type="radio" name="subFilter" value="charging" /> 仅充电视频</label>
+          </div>
+        </div>
+        <div class="sub-ignore-head">
+          <span>忽略清单</span>
+          <span id="subIgnoreCount" class="muted"></span>
+          <span class="spacer"></span>
+          <button id="subIgnoreSelectAll" class="btn ghost small" type="button">全选</button>
+          <button id="subIgnoreRemove" class="btn ghost small" type="button">移除选中</button>
+        </div>
+        <div id="subIgnoreList" class="sub-ignore-list"><div class="empty">没有忽略的视频</div></div>
+      </div>
+      <div class="modal-foot">
+        <span class="muted">忽略的视频不会出现在对比清单和更新汇总中</span>
+        <span class="spacer"></span>
+        <button id="subSettingsCancel" class="btn ghost small" type="button">取消</button>
+        <button id="subSettingsSave" class="btn primary small" type="button">保存</button>
       </div>
     </div>
   </div>

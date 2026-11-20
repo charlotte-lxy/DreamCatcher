@@ -178,14 +178,34 @@ function subDownloadAuthor(sub) {
   return ''
 }
 
-function buildSubComparison(sub, videos, localMap) {
+// 已下载和已上传的视频都不用再下载；已上传的单独标记，界面上用蓝色「已上传」
+async function buildSubComparison(sub, videos, localMap) {
   const filtered = applySubFilter(videos, sub)
   const ignored = new Set((sub.ignored || []).map((v) => String(v.id)))
   const visible = filtered.filter((v) => !ignored.has(String(v.id)))
   const cmp = subs.buildComparison(visible, localMap || new Map())
   const author = subDownloadAuthor(sub)
   if (author) for (const v of cmp.videos) v.subAuthor = author
-  return Object.assign(cmp, { ignoredCount: filtered.length - visible.length, filteredCount: filtered.length })
+  const names = await upload.uploadedNames(sub.key)
+  const uploadedIds = new Set()
+  for (const name of names) {
+    const id = subs.idFromFilename(sub.site, name)
+    if (id) uploadedIds.add(id)
+  }
+  let uploaded = 0
+  for (const v of cmp.videos) {
+    if (!uploadedIds.has(String(v.id))) continue
+    v.uploaded = true
+    v.selected = false
+    uploaded++
+  }
+  const missing = cmp.videos.filter((v) => !v.downloaded && !v.uploaded).length
+  return Object.assign(cmp, {
+    uploaded,
+    missing,
+    ignoredCount: filtered.length - visible.length,
+    filteredCount: filtered.length
+  })
 }
 
 async function listSubscriptionVideos(sub, onProgress) {
@@ -757,7 +777,7 @@ function registerIpc() {
     const prev = findSubscription(rec.key)
     if (prev) Object.assign(rec, { filter: prev.filter, ignored: prev.ignored, addedAt: prev.addedAt })
     const local = await subs.scanLocalMedia(effectiveDownloadDir())
-    const comparison = buildSubComparison(rec, list.videos, local.bilibili)
+    const comparison = await buildSubComparison(rec, list.videos, local.bilibili)
     medialib.saveVideoList(rec.key, list.videos)
     rec.lastCount = comparison.videos.length
     rec.lastMissing = comparison.missing
@@ -786,7 +806,7 @@ function registerIpc() {
     const prev = findSubscription(rec.key)
     if (prev) Object.assign(rec, { ignored: prev.ignored, addedAt: prev.addedAt })
     const local = await subs.scanLocalMedia(effectiveDownloadDir())
-    const comparison = buildSubComparison(rec, info.videos, local.hanime)
+    const comparison = await buildSubComparison(rec, info.videos, local.hanime)
     medialib.saveVideoList(rec.key, info.videos)
     rec.lastCount = comparison.videos.length
     rec.lastMissing = comparison.missing
@@ -802,7 +822,7 @@ function registerIpc() {
     medialib.saveVideoList(sub.key, r.videos)
     const local = await subs.scanLocalMedia(effectiveDownloadDir())
     const localMap = sub.site === 'hanime' ? local.hanime : local.bilibili
-    const comparison = buildSubComparison(sub, r.videos, localMap)
+    const comparison = await buildSubComparison(sub, r.videos, localMap)
     sub.lastCheckAt = Date.now()
     sub.lastCount = comparison.videos.length
     sub.lastMissing = comparison.missing

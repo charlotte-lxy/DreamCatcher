@@ -988,11 +988,16 @@ function updateSubCompareVisibility() {
 function updateSubSummary() {
   const total = subVideos.length
   const downloaded = subVideos.filter((v) => v.downloaded).length
+  const uploaded = subVideos.filter((v) => v.uploaded).length
+  const pending = subVideos.filter((v) => !v.downloaded && !v.uploaded).length
   const ignored = subCompare && subCompare.subscription && subCompare.subscription.ignored
     ? subCompare.subscription.ignored.length
     : 0
-  $('subCompareSummary').textContent = `网页 ${total} 个 · 已下载 ${downloaded} 个 · 待下载 ${total - downloaded} 个` +
-    (ignored ? ` · 已忽略 ${ignored} 个` : '')
+  let text = `网页 ${total} 个 · 已下载 ${downloaded} 个`
+  if (uploaded) text += ` · 已上传 ${uploaded} 个`
+  text += ` · 待下载 ${pending} 个`
+  if (ignored) text += ` · 已忽略 ${ignored} 个`
+  $('subCompareSummary').textContent = text
 }
 
 function updateSubSelection() {
@@ -1021,12 +1026,12 @@ function renderSubItems() {
     const row = createVideoRow(v, updateSubSelection, (video) => {
       ignoreVideos(subCompare.subscription.key, [video], false)
     })
-    if (v.downloaded) {
-      row.classList.add('downloaded')
+    if (v.uploaded || v.downloaded) {
+      row.classList.add(v.uploaded ? 'uploaded' : 'downloaded')
       const badge = document.createElement('span')
-      badge.className = 'up-downloaded'
-      badge.textContent = '已下载'
-      if (v.localPath) badge.title = v.localPath
+      badge.className = v.uploaded ? 'up-uploaded' : 'up-downloaded'
+      badge.textContent = v.uploaded ? '已上传' : '已下载'
+      if (!v.uploaded && v.localPath) badge.title = v.localPath
       row.querySelector('.up-meta').appendChild(badge)
     }
     frag.appendChild(row)
@@ -1046,7 +1051,7 @@ function showSubCompare(res) {
 }
 
 function setSubSelection(missingOnly) {
-  for (const v of subVideos) v.selected = missingOnly ? !v.downloaded : false
+  for (const v of subVideos) v.selected = missingOnly ? (!v.downloaded && !v.uploaded) : false
   renderSubItems()
   updateSubSelection()
 }
@@ -1108,7 +1113,8 @@ async function checkSubscription(s) {
     updateSubsCache(res.subscription)
     renderSubscriptions()
     showSubCompare(res)
-    setSubNotice(site, `检查完成：已下载 ${res.downloaded} 个，待下载 ${res.missing} 个`, true)
+    const upText = res.uploaded ? `，已上传 ${res.uploaded} 个` : ''
+    setSubNotice(site, `检查完成：已下载 ${res.downloaded} 个${upText}，待下载 ${res.missing} 个`, true)
     summaryLoaded = false
   } catch (err) {
     setSubNotice(site, '检查失败：' + humanizeError(err.message))

@@ -196,4 +196,20 @@ async function autoAll(opts) {
   return out
 }
 
-module.exports = { list, save, remove, updateTask, candidates, runTask, autoAfterDownload, autoAll }
+// 该订阅已上传到云端的文件名：只查它自己任务的目录，未登录或没有任务时返回空
+async function uploadedNames(subKey) {
+  const names = new Set()
+  const tasks = tasksForKey(subKey)
+  if (!tasks.length || !ug.hasSession()) return names
+  for (const dest of new Set(tasks.map((t) => t.dest))) {
+    try {
+      const r = await ug.listDir(dest)
+      for (const f of r.files || []) names.add(f.name)
+    } catch (_) { /* 目录暂时不可用就当没上传过，不影响本地比对 */ }
+  }
+  return names
+}
+
+module.exports = {
+  list, save, remove, updateTask, candidates, runTask, autoAfterDownload, autoAll, uploadedNames
+}

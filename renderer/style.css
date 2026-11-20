@@ -259,6 +259,8 @@ body {
 .sub-compare-title { color: #c7ccd5; font-size: 13px; font-weight: 600; }
 .up-item.downloaded .up-title { color: #8b929e; }
 .up-downloaded { color: #59c47a; }
+.up-uploaded { color: #59a9ff; }
+.up-item.uploaded .up-title { color: #8b929e; }
 .up-ignore { flex: none; }
 
 .sub-settings-modal { width: min(680px, 100%); }

@@ -14,6 +14,15 @@ function bvidFromFilename(name) {
   return m ? m[1] : ''
 }
 
+// 从文件名里取视频 ID：B 站取 [BV号]，Hanime 取 [数字]
+function idFromFilename(site, name) {
+  if (site === 'hanime') {
+    const m = /\[(\d{3,10})\]/.exec(String(name || ''))
+    return m ? m[1] : ''
+  }
+  return bvidFromFilename(name)
+}
+
 // 递归扫描下载目录，分别返回 B 站 BV 号、Hanime 数字 ID → 本地文件路径
 async function scanLocalMedia(root) {
   const bilibili = new Map()
@@ -70,4 +79,4 @@ function buildComparison(videos, localMap) {
   return { videos: list, downloaded, missing: list.length - downloaded }
 }
 
-module.exports = { MEDIA_EXT, bvidFromFilename, scanLocalMedia, scanLocalBvids, filterVideos, buildComparison }
+module.exports = { MEDIA_EXT, bvidFromFilename, idFromFilename, scanLocalMedia, scanLocalBvids, filterVideos, buildComparison }

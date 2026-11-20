@@ -167,10 +167,12 @@ function applySubFilter(videos, sub) {
   return subs.filterVideos(list, sub.filter)
 }
 
-// Hanime 搜索订阅没有单独作者页；下载时统一用搜索词作为文件夹名和文件名前缀
-function subSearchAuthor(sub) {
-  if (!sub || sub.site !== 'hanime' || sub.type !== 'search') return ''
-  return String(sub.query || sub.name || '').trim()
+// Hanime 搜索订阅用搜索词、合集订阅用合集名作为文件夹名和文件名前缀，不用上传者
+function subDownloadAuthor(sub) {
+  if (!sub || sub.site !== 'hanime') return ''
+  if (sub.type === 'search') return String(sub.query || sub.name || '').trim()
+  if (sub.type === 'playlist') return String(sub.name || '').trim()
+  return ''
 }
 
 function buildSubComparison(sub, videos, localMap) {
@@ -178,7 +180,7 @@ function buildSubComparison(sub, videos, localMap) {
   const ignored = new Set((sub.ignored || []).map((v) => String(v.id)))
   const visible = filtered.filter((v) => !ignored.has(String(v.id)))
   const cmp = subs.buildComparison(visible, localMap || new Map())
-  const author = subSearchAuthor(sub)
+  const author = subDownloadAuthor(sub)
   if (author) for (const v of cmp.videos) v.subAuthor = author
   return Object.assign(cmp, { ignoredCount: filtered.length - visible.length, filteredCount: filtered.length })
 }
@@ -222,7 +224,7 @@ async function buildUpdateSummary() {
           }
         }
         const base = cutoff >= 0 ? filtered.slice(0, cutoff) : filtered
-        const author = subSearchAuthor(sub)
+        const author = subDownloadAuthor(sub)
         const videos = base
           .filter((v) => !localMap.has(String(v.id)) && !ignored.has(String(v.id)))
           .map((v) => Object.assign({}, v, { selected: true }, author ? { subAuthor: author } : {}))

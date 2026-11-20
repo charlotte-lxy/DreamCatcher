@@ -323,6 +323,37 @@ function parseListCards(html, fallbackUploader) {
   return out
 }
 
+// 搜索页卡片和清单/上传者页不同，没有 user-tab-item-wrapper 包裹
+function parseSearchCards(html, fallbackUploader) {
+  const out = []
+  const seen = new Set()
+  const blocks = String(html).split(/<div[^>]*class="video-item-container"/i).slice(1)
+  const now = Date.now()
+  for (const block of blocks) {
+    const m = /<a[^>]+href="https?:\/\/hanime1\.me\/watch\?v=(\d+)[^"]*"/i.exec(block)
+    if (!m) continue
+    const id = m[1]
+    if (seen.has(id)) continue
+    const title = parseCardTitle(block)
+    if (!title) continue
+    seen.add(id)
+    const dateText = parseCardDate(block)
+    const durationText = firstMatch(/<div[^>]*class="duration"[^>]*>([\s\S]*?)<\/div>/i, block)
+    out.push({
+      id,
+      url: `https://hanime1.me/watch?v=${id}`,
+      title,
+      thumb: parseCardThumb(block),
+      duration: parseLength(stripTags(durationText)),
+      created: relativeToMs(dateText, now),
+      dateText,
+      uploader: parseCardUploader(block, fallbackUploader),
+      charging: false
+    })
+  }
+  return out
+}
+
 function parseSubscriptionUrl(input) {
   let u
   try {
@@ -337,6 +368,10 @@ function parseSubscriptionUrl(input) {
   }
   const m = /^\/user\/(\d+)(?:\/|$)/.exec(u.pathname)
   if (m) return { type: 'uploader', id: m[1], url: `https://hanime1.me/user/${m[1]}` }
+  if (u.pathname === '/search') {
+    const query = String(u.searchParams.get('query') || '').trim()
+    if (query) return { type: 'search', id: query, url: `https://hanime1.me/search?query=${encodeURIComponent(query)}` }
+  }
   return null
 }
 
@@ -417,10 +452,40 @@ async function listUploader(input, opts = {}) {
   }
 }
 
+async function listSearch(input, opts = {}) {
+  const meta = parseSubscriptionUrl(input)
+  if (!meta || meta.type !== 'search') throw new Error('需要 Hanime 搜索链接（.../search?query=...）')
+  const base = `https://hanime1.me/search?query=${encodeURIComponent(meta.id)}`
+  const first = await fetchText(base, { proxy: opts.proxy, referer: 'https://hanime1.me/' })
+  let videos = parseSearchCards(first, meta.id)
+  const pages = maxPage(first)
+  if (opts.onProgress) opts.onProgress({ loaded: videos.length, total: 0, site: 'hanime', page: 1, pages })
+  for (let page = 2; page <= pages; page++) {
+    await new Promise((r) => setTimeout(r, 180))
+    const html = await fetchText(`${base}&page=${page}`, { proxy: opts.proxy, referer: base })
+    videos = videos.concat(parseSearchCards(html, meta.id))
+    if (opts.onProgress) opts.onProgress({ loaded: videos.length, total: 0, site: 'hanime', page, pages })
+  }
+  videos = dedupeVideos(videos)
+  if (!videos.length) throw new Error('搜索结果里没有找到视频')
+  return {
+    site: 'hanime',
+    type: 'search',
+    id: meta.id,
+    url: meta.url,
+    name: meta.id,
+    face: (videos[0] && videos[0].thumb) || '',
+    author: meta.id,
+    videos
+  }
+}
+
 async function listSubscription(input, opts = {}) {
   const meta = parseSubscriptionUrl(input)
-  if (!meta) throw new Error('需要 Hanime 播放清单或上传者链接')
-  return meta.type === 'playlist' ? listPlaylist(input, opts) : listUploader(input, opts)
+  if (!meta) throw new Error('需要 Hanime 播放清单、上传者或搜索链接')
+  if (meta.type === 'playlist') return listPlaylist(input, opts)
+  if (meta.type === 'uploader') return listUploader(input, opts)
+  return listSearch(input, opts)
 }
 
 module.exports = {
@@ -436,7 +501,9 @@ module.exports = {
   pickFormat,
   parseSubscriptionUrl,
   parseListCards,
+  parseSearchCards,
   listPlaylist,
   listUploader,
+  listSearch,
   listSubscription
 }

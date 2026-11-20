@@ -177,6 +177,31 @@ test('hanime: 播放清单/上传者卡片与订阅链接', () => {
     type: 'playlist', id: '985664', url: 'https://hanime1.me/playlist?list=985664&sort=latest'
   })
   assert.strictEqual(hanime.parseSubscriptionUrl('https://hanime1.me/user/367303').type, 'uploader')
+  assert.deepStrictEqual(hanime.parseSubscriptionUrl('https://hanime1.me/search?query=Ameng'), {
+    type: 'search', id: 'Ameng', url: 'https://hanime1.me/search?query=Ameng'
+  })
+})
+
+test('hanime: 搜索结果卡片解析', () => {
+  const hanime = require('../main/hanime')
+  const html = `
+    <div class="video-item-container" title="搜索结果标题">
+      <a href="https://hanime1.me/watch?v=408293" class="video-link">
+        <img class="main-thumb" src="https://example.com/s.jpg">
+        <div class="duration">12:54</div>
+        <div class="title">搜索结果标题</div>
+      </a>
+      <div class="subtitle"><a href="https://hanime1.me/search?query=Ameng">Ameng</a><span class="subtitle-time">• 2個月前</span></div>
+    </div>
+    <div class="video-item-container">
+      <div class="title">没有视频链接的广告</div>
+    </div>`
+  const list = hanime.parseSearchCards(html, 'Ameng')
+  assert.strictEqual(list.length, 1)
+  assert.strictEqual(list[0].id, '408293')
+  assert.strictEqual(list[0].title, '搜索结果标题')
+  assert.strictEqual(list[0].uploader, 'Ameng')
+  assert.strictEqual(list[0].duration, 774)
 })
 
 test('signedSearchUrl: 充电专属参数参与 WBI 签名', () => {

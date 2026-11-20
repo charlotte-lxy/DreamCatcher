@@ -813,7 +813,9 @@ function panelOf(s) {
 
 function subTypeLabel(s) {
   if (siteOf(s) === 'bilibili') return 'B 站 UP'
-  return s.type === 'playlist' ? 'Hanime 播放清单' : 'Hanime 上传者'
+  if (s.type === 'playlist') return 'Hanime 播放清单'
+  if (s.type === 'search') return 'Hanime 搜索'
+  return 'Hanime 上传者'
 }
 
 function subFilterLabel(s) {
@@ -899,7 +901,8 @@ function subRow(s) {
   if (siteOf(s) === 'bilibili') {
     parts.push(`UID ${s.mid}`, subFilterLabel(s))
   } else {
-    parts.push(`${s.type === 'playlist' ? '清单' : '上传者'} ${s.id}`)
+    const kind = s.type === 'playlist' ? '清单' : (s.type === 'search' ? '搜索词' : '上传者')
+    parts.push(`${kind} ${s.id}`)
   }
   parts.push(`共 ${Number(s.lastCount) || 0} 个`, `未下载 ${Number(s.lastMissing) || 0} 个`)
   if (s.ignored && s.ignored.length) parts.push(`忽略 ${s.ignored.length} 个`)
@@ -1330,7 +1333,9 @@ async function removeIgnoredSelected() {
 
 function summaryTypeLabel(g) {
   if (g.site === 'bilibili') return 'B 站 UP'
-  return g.type === 'playlist' ? 'Hanime 播放清单' : 'Hanime 上传者'
+  if (g.type === 'playlist') return 'Hanime 播放清单'
+  if (g.type === 'search') return 'Hanime 搜索'
+  return 'Hanime 上传者'
 }
 
 function summaryBaseText(g) {

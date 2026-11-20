@@ -100,12 +100,12 @@ function subKey(site, type, id) {
 function normalizeSubscription(raw) {
   if (!raw || typeof raw !== 'object') return null
   const site = raw.site === 'hanime' ? 'hanime' : 'bilibili'
-  const type = raw.type === 'playlist' || raw.type === 'uploader'
+  const type = ['playlist', 'uploader', 'search'].includes(raw.type)
     ? raw.type
     : (site === 'bilibili' ? 'up' : 'uploader')
   const id = String(site === 'bilibili'
     ? (raw.mid || raw.id || '')
-    : (raw.listId || raw.userId || raw.id || '')).trim()
+    : (raw.listId || raw.userId || raw.query || raw.id || '')).trim()
   if (!id) return null
   const ignored = (Array.isArray(raw.ignored) ? raw.ignored : [])
     .filter((v) => v && v.id)
@@ -122,7 +122,9 @@ function normalizeSubscription(raw) {
   const filter = raw.filter === 'normal' || raw.filter === 'charging' ? raw.filter : 'all'
   const url = raw.url || (site === 'bilibili'
     ? `https://space.bilibili.com/${id}`
-    : type === 'playlist' ? `https://hanime1.me/playlist?list=${id}&sort=latest` : `https://hanime1.me/user/${id}`)
+    : type === 'playlist' ? `https://hanime1.me/playlist?list=${id}&sort=latest`
+      : type === 'search' ? `https://hanime1.me/search?query=${encodeURIComponent(id)}`
+        : `https://hanime1.me/user/${id}`)
   return Object.assign({}, raw, {
     site,
     type,
@@ -133,6 +135,7 @@ function normalizeSubscription(raw) {
     ignored,
     listId: site === 'hanime' && type === 'playlist' ? id : String(raw.listId || ''),
     userId: site === 'hanime' && type === 'uploader' ? id : String(raw.userId || ''),
+    query: site === 'hanime' && type === 'search' ? id : String(raw.query || ''),
     name: String(raw.name || (site === 'bilibili' ? `UP ${id}` : `Hanime ${id}`)),
     face: String(raw.face || ''),
     lastCheckAt: Number(raw.lastCheckAt) || 0,
@@ -751,6 +754,7 @@ function registerIpc() {
       type: info.type,
       listId: info.type === 'playlist' ? info.id : '',
       userId: info.type === 'uploader' ? info.id : '',
+      query: info.type === 'search' ? info.id : '',
       url: info.url,
       name: info.name,
       face: info.face,

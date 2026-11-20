@@ -1,10 +1,19 @@
 {
-  "version": "0.5.1",
+  "version": "0.5.2",
   "date": "2026-11-20",
-  "asar": "release/app-0.5.1.asar",
-  "sha256": "4f62c373792d7ddbe80eafd9f8cb884ece788e13b31a1997ac6e0082d3283b43",
-  "size": 215308,
+  "asar": "release/app-0.5.2.asar",
+  "sha256": "5e1777c66325ee3cf19e31404d0947cdafb3340a1b7be2a85c848c12538223d5",
+  "size": 218382,
   "releases": [
+    {
+      "version": "0.5.2",
+      "date": "2026-11-20",
+      "items": [
+        "Hanime 订阅新增「搜索订阅」：粘贴 search?query=... 即可把搜索结果作为订阅",
+        "搜索结果自动翻页，支持忽略清单、更新汇总、批量下载/忽略",
+        "搜索订阅在列表中显示为「Hanime 搜索」并展示搜索词"
+      ]
+    },
     {
       "version": "0.5.1",
       "date": "2026-11-20",

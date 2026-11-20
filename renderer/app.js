@@ -771,6 +771,7 @@ function downloadVideoItem(v, prefix, index) {
     url: v.url,
     maxHeight: 0,
     audioOnly: false,
+    subAuthor: v.subAuthor || '',
     expectedDuration: Number(v.duration) || 0
   }).then((res) => markTaskDone(ref, res))
     .catch((err) => markTaskFailed(ref, err))

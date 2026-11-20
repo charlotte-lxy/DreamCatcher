@@ -198,11 +198,13 @@ function sanitizeName(name) {
     .replace(/[. ]+$/, '')
 }
 
-function outputPath(outDir, info) {
-  const uploader = sanitizeName(info.uploader) || 'Hanime'
+function outputPath(outDir, info, authorOverride) {
+  const pageUploader = sanitizeName(info.uploader)
+  const uploader = sanitizeName(authorOverride) || pageUploader || 'Hanime'
   const date = info.uploadDate || new Date().toISOString().slice(0, 10)
   let title = String(info.title || '').trim()
-  const prefix = new RegExp('^\\[' + uploader.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\]\\s*')
+  const prefixUploader = pageUploader || uploader
+  const prefix = new RegExp('^\\[' + prefixUploader.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\]\\s*')
   title = title.replace(prefix, '')
   title = sanitizeName(title).slice(0, 120) || `Hanime ${info.id}`
   const base = `${uploader}_${date}_${title} [${info.id}]`

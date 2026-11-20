@@ -167,11 +167,19 @@ function applySubFilter(videos, sub) {
   return subs.filterVideos(list, sub.filter)
 }
 
+// Hanime 搜索订阅没有单独作者页；下载时统一用搜索词作为文件夹名和文件名前缀
+function subSearchAuthor(sub) {
+  if (!sub || sub.site !== 'hanime' || sub.type !== 'search') return ''
+  return String(sub.query || sub.name || '').trim()
+}
+
 function buildSubComparison(sub, videos, localMap) {
   const filtered = applySubFilter(videos, sub)
   const ignored = new Set((sub.ignored || []).map((v) => String(v.id)))
   const visible = filtered.filter((v) => !ignored.has(String(v.id)))
   const cmp = subs.buildComparison(visible, localMap || new Map())
+  const author = subSearchAuthor(sub)
+  if (author) for (const v of cmp.videos) v.subAuthor = author
   return Object.assign(cmp, { ignoredCount: filtered.length - visible.length, filteredCount: filtered.length })
 }
 
@@ -214,9 +222,10 @@ async function buildUpdateSummary() {
           }
         }
         const base = cutoff >= 0 ? filtered.slice(0, cutoff) : filtered
+        const author = subSearchAuthor(sub)
         const videos = base
           .filter((v) => !localMap.has(String(v.id)) && !ignored.has(String(v.id)))
-          .map((v) => Object.assign({}, v, { selected: true }))
+          .map((v) => Object.assign({}, v, { selected: true }, author ? { subAuthor: author } : {}))
         if (videos.length) {
           groups.push({
             key: sub.key,
@@ -869,6 +878,7 @@ function registerIpc() {
     tasks.set(id, state)
     pushHistory({ id, url: payload.url, title: payload.title || payload.url, status: 'running', createdAt: Date.now() })
     const isHanime = hanime.isUrl(payload.url)
+    const subAuthor = isHanime ? String(payload.subAuthor || '').trim() : ''
     const cookieFile = isHanime ? '' : await makeCookieFile(id)
 
     return new Promise((resolve, reject) => {
@@ -894,7 +904,7 @@ function registerIpc() {
             const info = await hanime.probe(payload.url, { proxy: proxyUrl })
             const chosen = hanime.pickFormat(info.formats, Number(payload.maxHeight) || 0)
             if (!chosen) throw new Error('没有找到可下载的视频源')
-            const final = hanime.outputPath(effectiveDownloadDir(), info)
+            const final = hanime.outputPath(effectiveDownloadDir(), info, subAuthor)
             fs.mkdirSync(path.dirname(final), { recursive: true })
             log(`开始下载 ${id}: ${payload.url} (hanime ${chosen.height}p, proxy=${proxyUrl || 'direct'})`)
             res = await dl.start({

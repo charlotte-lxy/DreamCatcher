@@ -7,7 +7,7 @@ const hanime = require('./hanime')
 const PARTITION = 'persist:tags'
 const YOUTUBE_ID_RE = /^[A-Za-z0-9_-]{11}$/
 const BVID_RE = /^(BV[0-9A-Za-z]{10})$/
-const HANIME_ID_RE = /^\d{4,10}$/
+const HANIME_ID_RE = /^\d{3,10}$/
 const QUALITY_TAG_RE = /^(?:\d{3,4}p|4k|8k|uhd|fhd|hd)$/i
 
 let tagSession = null
@@ -127,7 +127,7 @@ function detectFilename(input) {
   if (m) return { site: 'bilibili', id: m[1], url: siteUrl('bilibili', m[1]) }
   m = /\[([A-Za-z0-9_-]{11})\]/.exec(base)
   if (m && YOUTUBE_ID_RE.test(m[1])) return { site: 'youtube', id: m[1], url: siteUrl('youtube', m[1]) }
-  m = /\[(\d{4,10})\]/.exec(base)
+  m = /\[(\d{3,10})\]/.exec(base)
   if (m && HANIME_ID_RE.test(m[1])) return { site: 'hanime', id: m[1], url: siteUrl('hanime', m[1]) }
   return null
 }

@@ -39,7 +39,7 @@ async function scanLocalMedia(root) {
         if (!bilibili.has(bvid)) bilibili.set(bvid, full)
         continue
       }
-      const hm = /\[(\d{4,10})\]/.exec(ent.name)
+      const hm = /\[(\d{3,10})\]/.exec(ent.name)
       if (hm && !hanime.has(hm[1])) hanime.set(hm[1], full)
     }
   }

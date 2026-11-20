@@ -1,10 +1,19 @@
 {
-  "version": "0.5.2",
+  "version": "0.5.3",
   "date": "2026-11-20",
-  "asar": "release/app-0.5.2.asar",
-  "sha256": "5e1777c66325ee3cf19e31404d0947cdafb3340a1b7be2a85c848c12538223d5",
-  "size": 218382,
+  "asar": "release/app-0.5.3.asar",
+  "sha256": "360a8da71b13f1a3c050f7970826c3c96e96bfa53f9e0480b3eb89469ec1d5ac",
+  "size": 219353,
   "releases": [
+    {
+      "version": "0.5.3",
+      "date": "2026-11-20",
+      "items": [
+        "Hanime 搜索订阅下载时，统一用搜索词作为文件夹名和文件名前缀，不再使用视频上传者",
+        "例如搜索 Ameng 的视频保存为 Ameng/Ameng_日期_标题 [ID].mp4；其他订阅和单资源下载仍按原上传者命名",
+        "修复 Hanime 三位数视频 ID（如 663、868）在本地扫描中无法识别的问题"
+      ]
+    },
     {
       "version": "0.5.2",
       "date": "2026-11-20",

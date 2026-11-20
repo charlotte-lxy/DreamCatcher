@@ -132,6 +132,7 @@ test('scanLocalBvids: 递归扫描音视频，忽略非媒体与无 BV 号文件
     fs.writeFileSync(path.join(root, 'UP', 'y [BV1yy411c7mE].m4a'), '')
     fs.writeFileSync(path.join(root, 'z [BV1zz411c7mF].txt'), '')
     fs.writeFileSync(path.join(root, 'artist_2026-01-01_标题 [409270].mp4'), '')
+    fs.writeFileSync(path.join(root, 'short_2024-01-01_标题 [663].mp4'), '')
     fs.writeFileSync(path.join(root, 'no-id.mp4'), '')
     const map = await sub.scanLocalBvids(root)
     assert.strictEqual(map.size, 2)
@@ -141,6 +142,7 @@ test('scanLocalBvids: 递归扫描音视频，忽略非媒体与无 BV 号文件
     const media = await sub.scanLocalMedia(root)
     assert.strictEqual(media.bilibili.size, 2)
     assert.ok(media.hanime.has('409270'))
+    assert.ok(media.hanime.has('663'))
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
@@ -293,6 +295,7 @@ test('hanime: 页面元数据、标签与多画质解析', () => {
   assert.strictEqual(hanime.pickFormat(info.formats, 0).height, 1080)
   assert.strictEqual(hanime.pickFormat(info.formats, 720).height, 720)
   assert.ok(hanime.outputPath('D:\\out', info).endsWith('artist_2026-11-19_Demo Title [123].mp4'))
+  assert.ok(hanime.outputPath('D:\\out', info, 'Ameng').endsWith('Ameng_2026-11-19_Demo Title [123].mp4'))
 })
 
 test('tags: 三站点链接与文件名识别', () => {

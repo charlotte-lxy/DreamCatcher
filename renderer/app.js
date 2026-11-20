@@ -6,7 +6,7 @@ let taskGroup = 0
 let currentMeta = null
 let settingsCache = {}
 let currentModule = 'acquire'
-const currentSub = { acquire: 'single', subscribe: 'bili', library: 'all', settings: 'download' }
+const currentSub = { acquire: 'single', subscribe: 'bili', upload: 'ugreen', library: 'all', settings: 'download' }
 
 /* ---------------- 通用 ---------------- */
 function fmtDuration(sec) {
@@ -75,6 +75,12 @@ const SUBBARS = {
       { id: 'audio', label: '音频' }
     ]
   },
+  upload: {
+    title: '上传',
+    items: [
+      { id: 'ugreen', label: '绿联云' }
+    ]
+  },
   settings: {
     title: '设置',
     items: [
@@ -141,8 +147,14 @@ function onSubChange() {
       panel.classList.toggle('hidden', panel.dataset.panel !== currentSub.settings)
     }
     if (currentSub.settings === 'update') loadUpdateState()
+    if (currentSub.settings === 'account') {
+      loadUgreenConfig()
+      refreshUgreenStatus(false)
+    }
   } else if (currentModule === 'library') {
     loadFiles(currentSub.library)
+  } else if (currentModule === 'upload') {
+    loadUploadPage()
   }
 }
 
@@ -761,7 +773,7 @@ async function loadUpList() {
   }
 }
 
-function downloadVideoItem(v, prefix, index) {
+function downloadVideoItem(v, prefix, index, subKey) {
   const id = prefix + Date.now().toString(36) + '_' + index.toString(36) + Math.random().toString(36).slice(2, 5)
   const ref = addTask(id, v.title || v.url)
   taskSpeeds.delete(id)
@@ -772,7 +784,10 @@ function downloadVideoItem(v, prefix, index) {
     maxHeight: 0,
     audioOnly: false,
     subAuthor: v.subAuthor || '',
-    expectedDuration: Number(v.duration) || 0
+    expectedDuration: Number(v.duration) || 0,
+    // 订阅下载才登记来源，主进程据此把下完的文件交给自动上传
+    subKey: subKey || '',
+    mediaId: v.id ? String(v.id) : ''
   }).then((res) => markTaskDone(ref, res))
     .catch((err) => markTaskFailed(ref, err))
     .finally(() => {
@@ -1149,7 +1164,7 @@ function startSubDownload() {
   const key = subCompare.subscription.key
   const site = siteOf(subCompare.subscription)
   const count = chosen.length
-  const jobs = chosen.map((v, i) => downloadVideoItem(v, 's', i))
+  const jobs = chosen.map((v, i) => downloadVideoItem(v, 's', i, key))
   for (const v of chosen) v.selected = false
   renderSubItems()
   updateSubSelection()
@@ -1385,7 +1400,7 @@ function summaryGroupEl(g) {
   download.addEventListener('click', () => {
     const chosen = g.videos.filter((v) => v.selected)
     if (!chosen.length) return
-    const jobs = chosen.map((v, i) => downloadVideoItem(v, 's', i))
+    const jobs = chosen.map((v, i) => downloadVideoItem(v, 's', i, g.key))
     const ids = new Set(chosen.map((v) => String(v.id)))
     summaryGroups = summaryGroups.map((x) => x.key === g.key
       ? Object.assign({}, x, { videos: x.videos.filter((v) => !ids.has(String(v.id))) })
@@ -1736,6 +1751,354 @@ async function loadSettings() {
   } catch (_) { /* 读取失败沿用默认值 */ }
 }
 
+/* ---------------- 上传（绿联云） ---------------- */
+let ugStatus = null
+let ugConfig = null
+let ugTasks = []
+let ugBusy = false
+let ugDirPath = '/home'
+
+function setUgStatus(text, ok) {
+  const el = $('ugStatus')
+  if (!el) return
+  el.textContent = text || ''
+  el.classList.toggle('ok', !!ok)
+}
+
+function setUgAcctStatus(text, ok) {
+  const el = $('ugAcctStatus')
+  el.textContent = text || ''
+  el.classList.toggle('ok', !!ok)
+}
+
+async function refreshUgreenStatus(force) {
+  try {
+    ugStatus = force ? await window.api.ugreenLogin() : await window.api.ugreenStatus()
+  } catch (err) {
+    ugStatus = { ok: false, error: humanizeError(err.message) }
+  }
+  const ok = !!(ugStatus && ugStatus.ok)
+  $('ugGate').classList.toggle('hidden', ok)
+  $('ugBody').classList.toggle('hidden', !ok)
+  $('ugGateStatus').textContent = ok ? '' : ((ugStatus && ugStatus.error) || '还没有登录绿联云账号')
+  $('ugAcctStatus').textContent = ok ? '已登录' : '未登录'
+  $('ugAcctStatus').classList.toggle('ok', ok)
+  $('ugLogout').classList.toggle('hidden', !ok)
+  return ugStatus
+}
+
+async function loadUgreenConfig() {
+  try {
+    ugConfig = await window.api.ugreenConfig()
+  } catch (_) {
+    ugConfig = {}
+  }
+  $('ugUser').value = ugConfig.username || ''
+  $('ugPass').value = ''
+  $('ugLocal').value = ugConfig.local || ''
+  $('ugRemote').value = ugConfig.remote || ''
+  $('ugEndpoint').value = ugConfig.endpoint === 'remote' ? 'remote' : 'local'
+}
+
+async function saveUgreenAccount() {
+  const patch = {
+    username: $('ugUser').value.trim(),
+    local: $('ugLocal').value.trim(),
+    remote: $('ugRemote').value.trim(),
+    endpoint: $('ugEndpoint').value
+  }
+  if (!patch.username) return setUgAcctStatus('先填写账号')
+  if (!patch.local && !patch.remote) return setUgAcctStatus('至少填写一个地址')
+  const pass = $('ugPass').value
+  if (pass) patch.password = pass
+  $('ugSave').disabled = true
+  setUgAcctStatus('保存中…')
+  try {
+    ugConfig = await window.api.ugreenSaveConfig(patch)
+    $('ugPass').value = ''
+    setUgAcctStatus('正在登录…')
+    const r = await refreshUgreenStatus(true)
+    if (r.ok) {
+      setUgAcctStatus('已登录', true)
+      if (currentModule === 'upload') loadUploadPage()
+    } else {
+      setUgAcctStatus('登录失败：' + (r.error || '未知错误'))
+    }
+  } catch (err) {
+    setUgAcctStatus('保存失败：' + humanizeError(err.message))
+  } finally {
+    $('ugSave').disabled = false
+  }
+}
+
+async function loadUploadPage() {
+  await refreshUgreenStatus(false)
+  if (!ugStatus || !ugStatus.ok) return
+  await loadUploadSubs()
+  await loadUploadTasks()
+}
+
+async function loadUploadSubs() {
+  const sel = $('ugSub')
+  let list = []
+  try {
+    list = await window.api.listSubs()
+  } catch (_) {
+    list = []
+  }
+  const prev = sel.value
+  sel.innerHTML = ''
+  if (!list.length) {
+    const o = document.createElement('option')
+    o.value = ''
+    o.textContent = '还没有订阅，先去订阅页添加'
+    sel.appendChild(o)
+    return
+  }
+  for (const s of list) {
+    const o = document.createElement('option')
+    o.value = s.key
+    o.textContent = (s.name || s.key) + (s.site === 'hanime' ? '（Hanime）' : '')
+    sel.appendChild(o)
+  }
+  if (prev) sel.value = prev
+}
+
+function fmtAgo(ts) {
+  if (!ts) return '从未同步'
+  const d = Date.now() - ts
+  if (d < 60000) return '刚刚'
+  if (d < 3600000) return Math.floor(d / 60000) + ' 分钟前'
+  if (d < 86400000) return Math.floor(d / 3600000) + ' 小时前'
+  return Math.floor(d / 86400000) + ' 天前'
+}
+
+async function loadUploadTasks() {
+  try {
+    ugTasks = await window.api.listUploads()
+  } catch (_) {
+    ugTasks = []
+  }
+  renderUploadTasks()
+}
+
+function renderUploadTasks() {
+  const box = $('ugTasks')
+  box.innerHTML = ''
+  $('ugSummary').textContent = ugTasks.length ? `${ugTasks.length} 个任务` : ''
+  if (!ugTasks.length) {
+    box.innerHTML = '<div class="empty">还没有上传任务</div>'
+    return
+  }
+  for (const t of ugTasks) {
+    const row = document.createElement('div')
+    row.className = 'file-row'
+
+    const type = document.createElement('div')
+    type.className = 'file-type'
+    type.textContent = t.mode === 'auto' ? '⇄' : '↑'
+
+    const main = document.createElement('div')
+    main.className = 'file-main'
+    const name = document.createElement('div')
+    name.className = 'file-name'
+    name.textContent = `${t.subName || t.subKey} → ${t.dest}`
+    const meta = document.createElement('div')
+    meta.className = 'file-meta'
+    const parts = [t.mode === 'auto' ? '自动同步' : '手动同步']
+    if (t.last) {
+      parts.push(`上次 ${fmtAgo(t.last.at)}：上传 ${t.last.uploaded} · 跳过 ${t.last.skipped}${t.last.failed ? ' · 失败 ' + t.last.failed : ''}`)
+      if (t.last.error) parts.push(t.last.error)
+    } else {
+      parts.push('还没同步过')
+    }
+    if (t.deleteLocal) parts.push('上传后删本地')
+    meta.textContent = parts.join(' · ')
+    main.append(name, meta)
+
+    const actions = document.createElement('div')
+    actions.className = 'file-actions'
+    const run = document.createElement('button')
+    run.className = 'btn ghost small'
+    run.textContent = '立即同步'
+    run.dataset.act = 'run'
+    run.dataset.id = t.id
+    const mode = document.createElement('button')
+    mode.className = 'btn ghost small'
+    mode.textContent = t.mode === 'auto' ? '改为手动' : '改为自动'
+    mode.dataset.act = 'mode'
+    mode.dataset.id = t.id
+    const del = document.createElement('button')
+    del.className = 'btn ghost small'
+    del.textContent = '删除'
+    del.dataset.act = 'remove'
+    del.dataset.id = t.id
+    actions.append(run, mode, del)
+
+    row.append(type, main, actions)
+    box.appendChild(row)
+  }
+}
+
+async function createUploadTask() {
+  const subKey = $('ugSub').value
+  const dest = $('ugDest').value.trim()
+  if (!subKey) return setUgStatus('先选择一个订阅')
+  if (!dest) return setUgStatus('先选择绿联云上传位置')
+  const sel = $('ugSub').selectedOptions[0]
+  const exist = ugTasks.find((t) => t.subKey === subKey && t.dest === dest)
+  const task = {
+    subKey,
+    subName: sel ? sel.textContent : subKey,
+    dest,
+    mode: $('ugMode').value,
+    deleteLocal: $('ugDeleteLocal').checked,
+    enabled: true
+  }
+  if (exist) task.id = exist.id
+  try {
+    ugTasks = await window.api.saveUpload(task)
+    renderUploadTasks()
+    setUgStatus(exist ? '已更新这条上传任务' : '已添加上传任务', true)
+  } catch (err) {
+    setUgStatus('添加失败：' + humanizeError(err.message))
+  }
+}
+
+async function openUgDir() {
+  $('dirModal').classList.remove('hidden')
+  await loadUgDir('/home')
+}
+
+function closeUgDir() {
+  $('dirModal').classList.add('hidden')
+}
+
+async function loadUgDir(p) {
+  $('dirPath').textContent = p
+  $('dirList').innerHTML = '<div class="empty">加载中…</div>'
+  try {
+    const r = await window.api.ugreenListDir(p)
+    ugDirPath = r.path || p
+    const box = $('dirList')
+    box.innerHTML = ''
+    for (const d of r.dirs) {
+      const row = document.createElement('div')
+      row.className = 'dir-row'
+      row.dataset.path = d.path
+      const ico = document.createElement('span')
+      ico.className = 'ico'
+      ico.textContent = '▸'
+      const nm = document.createElement('span')
+      nm.textContent = d.name
+      row.append(ico, nm)
+      box.appendChild(row)
+    }
+    if (!r.dirs.length) {
+      const empty = document.createElement('div')
+      empty.className = 'empty'
+      empty.textContent = '这里没有子文件夹'
+      box.appendChild(empty)
+    }
+    $('dirPath').textContent = ugDirPath + (r.files.length ? `（${r.files.length} 个文件）` : '')
+    $('dirUp').disabled = ugDirPath === '/home'
+  } catch (err) {
+    const box = $('dirList')
+    box.innerHTML = ''
+    const d = document.createElement('div')
+    d.className = 'empty'
+    d.textContent = '读取失败：' + humanizeError(err.message)
+    box.appendChild(d)
+  }
+}
+
+$('ugSave').addEventListener('click', saveUgreenAccount)
+
+$('ugLogout').addEventListener('click', async () => {
+  try {
+    await window.api.ugreenLogout()
+  } catch (_) { /* 清除失败也刷新一次状态 */ }
+  await refreshUgreenStatus(false)
+  setUgAcctStatus('已退出登录')
+})
+
+$('ugGoAccount').addEventListener('click', () => {
+  currentSub.settings = 'account'
+  switchModule('settings')
+})
+
+$('ugCreate').addEventListener('click', createUploadTask)
+$('ugBrowse').addEventListener('click', openUgDir)
+$('ugRefresh').addEventListener('click', () => {
+  refreshUgreenStatus(false)
+  loadUploadTasks()
+})
+
+$('dirClose').addEventListener('click', closeUgDir)
+$('dirCancel').addEventListener('click', closeUgDir)
+$('dirModal').addEventListener('click', (e) => {
+  if (e.target === $('dirModal')) closeUgDir()
+})
+$('dirUp').addEventListener('click', () => {
+  if (ugDirPath === '/home') return
+  loadUgDir(ugDirPath.split('/').slice(0, -1).join('/') || '/')
+})
+$('dirPick').addEventListener('click', () => {
+  $('ugDest').value = ugDirPath
+  closeUgDir()
+  setUgStatus('')
+})
+$('dirList').addEventListener('click', (e) => {
+  const row = e.target.closest('.dir-row')
+  if (row) loadUgDir(row.dataset.path)
+})
+
+$('ugTasks').addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-act]')
+  if (!btn || ugBusy) return
+  const id = btn.dataset.id
+  const task = ugTasks.find((t) => t.id === id)
+  if (!task) return
+  if (btn.dataset.act === 'remove') {
+    if (!confirm('删除这条上传任务？已经上传到绿联云的文件不会被删除。')) return
+    try {
+      ugTasks = await window.api.removeUpload(id)
+      renderUploadTasks()
+      setUgStatus('已删除上传任务', true)
+    } catch (err) {
+      setUgStatus('删除失败：' + humanizeError(err.message))
+    }
+    return
+  }
+  if (btn.dataset.act === 'mode') {
+    const next = task.mode === 'auto' ? 'manual' : 'auto'
+    try {
+      ugTasks = await window.api.saveUpload(Object.assign({}, task, { mode: next }))
+      renderUploadTasks()
+      setUgStatus(next === 'auto' ? '已改为自动同步' : '已改为手动同步', true)
+    } catch (err) {
+      setUgStatus('修改失败：' + humanizeError(err.message))
+    }
+    return
+  }
+  ugBusy = true
+  btn.disabled = true
+  setUgStatus('正在同步…')
+  try {
+    const r = await window.api.runUpload(id)
+    const parts = [`上传 ${r.uploaded} 个`, `跳过 ${r.skipped} 个`]
+    if (r.failed) parts.push(`失败 ${r.failed} 个`)
+    if (r.error) parts.push(r.error)
+    setUgStatus(parts.join('，'), !r.failed)
+  } catch (err) {
+    setUgStatus('同步失败：' + humanizeError(err.message))
+  } finally {
+    ugBusy = false
+    btn.disabled = false
+    loadUploadTasks()
+  }
+})
+
 /* ---------------- 事件绑定 ---------------- */
 for (const btn of document.querySelectorAll('.rail-btn')) {
   btn.addEventListener('click', () => switchModule(btn.dataset.module))
@@ -1815,6 +2178,7 @@ $('taskModal').addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return
   if (!$('subSettingsModal').classList.contains('hidden')) closeSubSettings()
+  else if (!$('dirModal').classList.contains('hidden')) closeDirModal()
   else if (!$('filterModal').classList.contains('hidden')) closeFilterModal()
   else if (!$('taskModal').classList.contains('hidden')) closeTaskModal()
 })
@@ -2044,6 +2408,18 @@ window.api.onLog((line) => {
   el.textContent += line.replace(/^\[[^\]]+\]\s*/, '') + '\n'
   el.scrollTop = el.scrollHeight
 })
+
+window.api.onUploadProgress((p) => {
+  if (!p) return
+  if (p.error) {
+    setUgStatus(`上传 ${p.file} 失败：${p.error}`)
+    return
+  }
+  const pct = p.total ? Math.min(100, (p.done / p.total) * 100) : 0
+  setUgStatus(`正在上传 ${p.index}/${p.count}：${p.file} ${pct.toFixed(0)}%`, true)
+})
+
+window.api.onUploadDone(() => loadUploadTasks())
 
 /* ---------------- 启动 ---------------- */
 refreshAuth()

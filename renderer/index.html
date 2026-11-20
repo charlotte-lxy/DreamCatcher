@@ -32,6 +32,7 @@
       <button class="rail-btn active" data-module="acquire"><span class="ico">⇩</span><span>资源获取</span></button>
       <button class="rail-btn" data-module="subscribe"><span class="ico">★</span><span>订阅</span></button>
       <button class="rail-btn" data-module="library"><span class="ico">▦</span><span>资源管理</span></button>
+      <button class="rail-btn" data-module="upload"><span class="ico">↑</span><span>上传</span></button>
     </nav>
     <div class="rail-bottom">
       <button class="rail-btn" data-module="settings"><span class="ico">⚙</span><span>设置</span></button>
@@ -183,6 +184,56 @@
         </div>
       </section>
 
+      <!-- 上传 -->
+      <section class="page" id="page-upload">
+        <h1 class="page-title">上传 <span id="ugSummary" class="title-sub"></span></h1>
+
+        <div class="card" id="ugGate">
+          <h3>绿联云</h3>
+          <p class="muted">把已下载的视频上传到绿联云，需要先登录账号。</p>
+          <div id="ugGateStatus" class="status"></div>
+          <div class="row">
+            <span class="spacer"></span>
+            <button id="ugGoAccount" class="btn primary">去设置中登录</button>
+          </div>
+        </div>
+
+        <div id="ugBody" class="hidden">
+          <div class="card">
+            <h3>添加上传任务</h3>
+            <div class="row">
+              <span class="field-label">订阅</span>
+              <select id="ugSub" class="select"></select>
+              <span class="field-label">同步方式</span>
+              <select id="ugMode" class="select">
+                <option value="manual">手动同步</option>
+                <option value="auto">自动同步</option>
+              </select>
+            </div>
+            <div class="row">
+              <span class="field-label">上传位置</span>
+              <input id="ugDest" class="input" readonly placeholder="点击「浏览」选择绿联云目录" />
+              <button id="ugBrowse" class="btn ghost">浏览</button>
+            </div>
+            <div class="row">
+              <label class="check"><input id="ugDeleteLocal" type="checkbox" /> 上传成功后删除本地文件</label>
+              <span class="spacer"></span>
+              <button id="ugCreate" class="btn primary">添加上传任务</button>
+            </div>
+            <div id="ugStatus" class="status"></div>
+          </div>
+
+          <div class="card">
+            <div class="row">
+              <h3>上传任务</h3>
+              <span class="spacer"></span>
+              <button id="ugRefresh" class="btn ghost small">刷新</button>
+            </div>
+            <div id="ugTasks" class="files"><div class="empty">还没有上传任务</div></div>
+          </div>
+        </div>
+      </section>
+
       <!-- 资源管理 -->
       <section class="page" id="page-library">
         <h1 class="page-title">资源管理 <span id="libSummary" class="title-sub"></span></h1>
@@ -223,14 +274,48 @@
         <div class="panel hidden" data-panel="account">
           <div class="card">
             <h3>账号管理</h3>
-            <p class="muted">下载充电视频需要登录有对应权益的 B 站账号。</p>
-            <div class="row">
-              <img id="avatar" class="avatar hidden" alt="" referrerpolicy="no-referrer" />
-              <span id="who" class="who">未登录</span>
-              <span class="spacer"></span>
-              <button id="loginBtn" class="btn primary">登录 B 站</button>
+            <p class="muted">按网站分别保存账号，登录态只保存在本机。</p>
+
+            <div class="acct-item">
+              <div class="acct-head">
+                <span class="acct-name">哔哩哔哩</span>
+                <span class="spacer"></span>
+                <img id="avatar" class="avatar hidden" alt="" referrerpolicy="no-referrer" />
+                <span id="who" class="who">未登录</span>
+                <button id="loginBtn" class="btn primary small">登录 B 站</button>
+              </div>
+              <p class="hint">下载充电视频需要登录有对应权益的 B 站账号；登录态保存在程序目录的 data 文件夹。</p>
             </div>
-            <p class="hint">登录态保存在程序目录的 data 文件夹，正常退出后不会丢失。</p>
+
+            <div class="acct-item">
+              <div class="acct-head">
+                <span class="acct-name">绿联云</span>
+                <span class="spacer"></span>
+                <span id="ugAcctStatus" class="status"></span>
+                <button id="ugLogout" class="btn ghost small hidden">退出登录</button>
+              </div>
+              <div class="row">
+                <span class="field-label">账号</span>
+                <input id="ugUser" class="input short" type="text" spellcheck="false" placeholder="手机号或用户名" />
+                <span class="field-label">密码</span>
+                <input id="ugPass" class="input short" type="password" placeholder="留空则不修改" />
+              </div>
+              <div class="row">
+                <span class="field-label">局域网</span>
+                <input id="ugLocal" class="input short" type="text" spellcheck="false" placeholder="http://192.168.1.2:9443" />
+              </div>
+              <div class="row">
+                <span class="field-label">远程</span>
+                <input id="ugRemote" class="input" type="text" spellcheck="false" placeholder="https://xxxx.cn66.ug.link" />
+                <span class="field-label">线路</span>
+                <select id="ugEndpoint" class="select">
+                  <option value="local">局域网</option>
+                  <option value="remote">远程</option>
+                </select>
+                <button id="ugSave" class="btn primary small">保存并登录</button>
+              </div>
+              <p class="hint">远程地址是 UGREENlink 跳转后地址栏里的那个域名；局域网连不上时切到远程。</p>
+            </div>
           </div>
         </div>
 
@@ -398,6 +483,28 @@
         <span class="spacer"></span>
         <button id="subSettingsCancel" class="btn ghost small" type="button">取消</button>
         <button id="subSettingsSave" class="btn primary small" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="dirModal" class="modal-mask hidden" role="dialog" aria-modal="true" aria-labelledby="dirTitle">
+    <div class="modal">
+      <div class="modal-head">
+        <h2 id="dirTitle">选择绿联云目录</h2>
+        <span id="dirPath" class="modal-sub"></span>
+        <button id="dirClose" class="modal-close" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="row">
+          <button id="dirUp" class="btn ghost small" type="button">上一级</button>
+        </div>
+        <div id="dirList" class="dir-list"><div class="empty">加载中…</div></div>
+      </div>
+      <div class="modal-foot">
+        <span class="muted">只显示文件夹，选中后作为上传位置</span>
+        <span class="spacer"></span>
+        <button id="dirCancel" class="btn ghost small" type="button">取消</button>
+        <button id="dirPick" class="btn primary small" type="button">选择当前目录</button>
       </div>
     </div>
   </div>

@@ -12,6 +12,9 @@ const store = require('./store')
 const subs = require('./subscription')
 const hanime = require('./hanime')
 const tagApi = require('./tags')
+const ugreen = require('./ugreen')
+const medialib = require('./medialib')
+const upload = require('./upload')
 
 const ROOT = path.join(__dirname, '..')
 const IS_PACKAGED = app.isPackaged
@@ -213,6 +216,7 @@ async function buildUpdateSummary() {
       sendSummaryProgress({ done: i, total: list.length, current: sub.name })
       try {
         const r = await listSubscriptionVideos(sub)
+        medialib.saveVideoList(sub.key, r.videos)
         const filtered = applySubFilter(r.videos || [], sub)
         const localMap = sub.site === 'hanime' ? local.hanime : local.bilibili
         const ignored = new Set((sub.ignored || []).map((v) => String(v.id)))
@@ -259,6 +263,10 @@ async function buildUpdateSummary() {
 
 function sendSubProgress(p) {
   if (win && !win.isDestroyed()) win.webContents.send('subs:progress', p)
+}
+
+function sendUploadProgress(p) {
+  if (win && !win.isDestroyed()) win.webContents.send('upload:progress', p)
 }
 
 function saveTagStore() {
@@ -750,6 +758,7 @@ function registerIpc() {
     if (prev) Object.assign(rec, { filter: prev.filter, ignored: prev.ignored, addedAt: prev.addedAt })
     const local = await subs.scanLocalMedia(effectiveDownloadDir())
     const comparison = buildSubComparison(rec, list.videos, local.bilibili)
+    medialib.saveVideoList(rec.key, list.videos)
     rec.lastCount = comparison.videos.length
     rec.lastMissing = comparison.missing
     const saved = upsertSubscription(rec)
@@ -778,6 +787,7 @@ function registerIpc() {
     if (prev) Object.assign(rec, { ignored: prev.ignored, addedAt: prev.addedAt })
     const local = await subs.scanLocalMedia(effectiveDownloadDir())
     const comparison = buildSubComparison(rec, info.videos, local.hanime)
+    medialib.saveVideoList(rec.key, info.videos)
     rec.lastCount = comparison.videos.length
     rec.lastMissing = comparison.missing
     const saved = upsertSubscription(rec)
@@ -789,6 +799,7 @@ function registerIpc() {
     const sub = findSubscription(key)
     if (!sub) throw new Error('订阅不存在，可能已被删除')
     const r = await listSubscriptionVideos(sub, sendSubProgress)
+    medialib.saveVideoList(sub.key, r.videos)
     const local = await subs.scanLocalMedia(effectiveDownloadDir())
     const localMap = sub.site === 'hanime' ? local.hanime : local.bilibili
     const comparison = buildSubComparison(sub, r.videos, localMap)
@@ -874,6 +885,44 @@ function registerIpc() {
 
   ipcMain.handle('subs:summary', () => buildUpdateSummary())
 
+  ipcMain.handle('ugreen:config', () => ugreen.publicConfig())
+
+  ipcMain.handle('ugreen:saveConfig', (_e, patch) => {
+    const cfg = ugreen.saveConfig(patch || {})
+    log(`绿联云账号配置已更新: ${cfg.username || '(空)'} endpoint=${cfg.endpoint}`)
+    return cfg
+  })
+
+  // 只检查本地缓存，不主动联网；force=true 时才真的去登录一次
+  ipcMain.handle('ugreen:status', () => ugreen.test(false))
+
+  ipcMain.handle('ugreen:login', async () => {
+    const r = await ugreen.test(true)
+    log(`绿联云登录: ${r.ok ? '成功' : '失败 ' + r.error}`)
+    return r
+  })
+
+  ipcMain.handle('ugreen:logout', () => {
+    ugreen.clearSession()
+    log('绿联云登录状态已清除')
+    return { ok: true }
+  })
+
+  ipcMain.handle('ugreen:listDir', (_e, p) => ugreen.listDir(p))
+
+  ipcMain.handle('upload:list', () => upload.list())
+
+  ipcMain.handle('upload:save', (_e, task) => upload.save(task || {}))
+
+  ipcMain.handle('upload:remove', (_e, id) => upload.remove(id))
+
+  ipcMain.handle('upload:run', async (_e, id) => {
+    const r = await upload.runTask(id, { downloadDir: effectiveDownloadDir(), onProgress: sendUploadProgress })
+    log(`上传任务 ${id}: 上传 ${r.uploaded} 跳过 ${r.skipped} 失败 ${r.failed}${r.error ? ' ' + r.error : ''}`)
+    if (win && !win.isDestroyed()) win.webContents.send('upload:done', Object.assign({ id }, r))
+    return Object.assign({ ok: !r.error }, r)
+  })
+
   ipcMain.handle('video:download', async (_e, payload) => {
     const id = payload.id || Date.now().toString(36)
     const state = { pid: 0, canceled: false }
@@ -945,7 +994,17 @@ function registerIpc() {
             updateHistory(id, { status: 'canceled', finishedAt: Date.now() })
           } else {
             updateHistory(id, { status: 'done', file: res.file, warning, finishedAt: Date.now() })
-            if (res.file) enqueueAutoTag(payload.url)
+            if (res.file) {
+              enqueueAutoTag(payload.url)
+              medialib.recordFile({ file: res.file, id: payload.mediaId, key: payload.subKey })
+              // 只传刚下完的文件；下载失败或取消不会走到这里
+              if (payload.subKey) {
+                upload.autoAfterDownload(payload.subKey, res.file, {
+                  downloadDir: effectiveDownloadDir(),
+                  onProgress: sendUploadProgress
+                }).catch((err) => log(`自动上传失败 ${id}: ${err.message}`))
+              }
+            }
           }
           resolve({ ok: true, file: res.file, canceled: !!res.canceled, warning })
         } catch (err) {
@@ -1062,6 +1121,14 @@ app.whenReady().then(async () => {
   if (process.argv.includes('--selftest')) return selftest()
   createWindow()
   updater.autoCheck(win, log)
+  // 启动后补跑一次自动同步，覆盖关机期间漏掉的文件
+  setTimeout(() => {
+    upload.autoAll({ downloadDir: effectiveDownloadDir(), onProgress: sendUploadProgress })
+      .then((rs) => {
+        if (rs.length) log(`自动同步完成: ${rs.length} 个任务`)
+      })
+      .catch((err) => log(`自动同步失败: ${err.message}`))
+  }, 15000)
 })
 
 // 无界面自检：只验证 cookie 导出与 yt-dlp 链路，不涉及登录

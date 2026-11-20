@@ -330,3 +330,20 @@ body {
 .update-toast-main { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: #8b929e; }
 .update-toast-main b { color: #e7e9ee; font-size: 13px; }
 .update-toast .modal-close { margin-left: 0; }
+
+/* ---------- 上传 / 账号条目 ---------- */
+.acct-item { padding: 14px 0; border-top: 1px solid #24282f; }
+.acct-item:first-of-type { border-top: none; padding-top: 4px; }
+.acct-head { display: flex; align-items: center; gap: 10px; }
+.acct-name { font-size: 13px; font-weight: 600; color: #e7e9ee; }
+.acct-item .row { margin-top: 8px; }
+.acct-item .hint { margin: 8px 0 0; }
+.check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #c7ccd5; cursor: pointer; }
+.dir-list { max-height: 320px; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.dir-row {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  border-radius: 8px; cursor: pointer; color: #c7ccd5; font-size: 13px;
+}
+.dir-row:hover { background: #1f232c; }
+.dir-row .ico { color: #b9a7ff; }
+.dir-row .dir-size { margin-left: auto; color: #6c7480; font-size: 12px; }

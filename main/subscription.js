@@ -70,4 +70,4 @@ function buildComparison(videos, localMap) {
   return { videos: list, downloaded, missing: list.length - downloaded }
 }
 
-module.exports = { bvidFromFilename, scanLocalMedia, scanLocalBvids, filterVideos, buildComparison }
+module.exports = { MEDIA_EXT, bvidFromFilename, scanLocalMedia, scanLocalBvids, filterVideos, buildComparison }

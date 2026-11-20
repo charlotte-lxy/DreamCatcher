@@ -65,6 +65,7 @@ body {
 }
 .topbar-right { display: flex; align-items: center; gap: 10px; flex: none; margin-left: auto; }
 .topbar-speed { color: #f0a04b; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.topbar-speed.up { color: #59a9ff; }
 
 /* ---------- 左侧主模块栏 ---------- */
 .rail {
@@ -352,3 +353,19 @@ body {
 
 .modal-body .check { margin-top: 14px; }
 .modal-body .status { margin-top: 10px; }
+
+/* ---------- 任务列表左侧模块栏 ---------- */
+.task-modal { width: min(820px, 100%); }
+.task-body { display: flex; flex: 1; min-height: 0; }
+.task-rail {
+  width: 132px; flex: none; display: flex; flex-direction: column; gap: 6px;
+  padding: 14px 10px; border-right: 1px solid #24282f; background: #14161b;
+}
+.task-rail-btn {
+  height: 36px; padding: 0 12px; border: 1px solid transparent; border-radius: 9px;
+  background: transparent; color: #8b929e; font-size: 13px; text-align: left; cursor: pointer;
+}
+.task-rail-btn:hover { background: #1c2028; color: #e7e9ee; }
+.task-rail-btn.active { background: #23202f; border-color: #332c4d; color: #b9a7ff; }
+.task-panes { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.task-pane { flex: 1; min-height: 0; }

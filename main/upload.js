@@ -129,17 +129,26 @@ async function doRun(task, { downloadDir, only, onProgress } = {}) {
         continue
       }
       try {
+        // 开始/进度/结束都走同一路事件，任务列表里按文件生成条目
+        const base = { taskId: task.id, taskName: task.subName, dest: task.dest, file: name, index: index + 1, count }
+        if (onProgress) onProgress(Object.assign({ phase: 'start', done: 0, total: item.size }, base))
         await ug.uploadFile(item.path, task.dest, (done, total) => {
-          if (onProgress) onProgress({ taskId: task.id, file: name, index: index + 1, count, done, total })
+          if (onProgress) onProgress(Object.assign({ phase: 'chunk', done, total }, base))
         })
         result.uploaded++
         result.bytes += item.size
         result.files.push(name)
+        if (onProgress) onProgress(Object.assign({ phase: 'done', done: item.size, total: item.size }, base))
         if (task.deleteLocal) fs.promises.rm(item.path, { force: true }).catch(() => {})
       } catch (err) {
         result.failed++
         result.error = String(err.message || err)
-        if (onProgress) onProgress({ taskId: task.id, file: name, index: index + 1, count, error: result.error })
+        if (onProgress) {
+          onProgress(Object.assign({
+            phase: 'error', done: 0, total: item.size, error: result.error,
+            taskId: task.id, taskName: task.subName, dest: task.dest, file: name, index: index + 1, count
+          }))
+        }
       }
     }
   } catch (err) {

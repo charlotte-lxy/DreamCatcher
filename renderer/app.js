@@ -2,6 +2,8 @@
 const $ = (id) => document.getElementById(id)
 const tasks = new Map()
 const taskSpeeds = new Map()
+const uploadEntries = new Map()
+let taskModule = 'download'
 let taskGroup = 0
 let currentMeta = null
 let settingsCache = {}
@@ -243,20 +245,36 @@ function setTaskInfo(ref, text) {
 }
 
 function updateTaskBadge() {
+  const active = [...tasks.values()].filter((r) => r.live).length
+  const uploading = [...uploadEntries.values()].filter((r) => r.live).length
+  const badge = $('taskCount')
+  badge.textContent = String(active + uploading)
+  badge.classList.toggle('hidden', active + uploading === 0)
+  updateTaskSummary()
+}
+
+// 任务列表顶部的说明与「清除」按钮按当前模块切换
+function updateTaskSummary() {
+  $('taskClear').classList.toggle('hidden', taskModule !== 'download')
+  if (taskModule === 'upload') {
+    const live = [...uploadEntries.values()].filter((r) => r.live).length
+    $('taskSummary').textContent = live
+      ? `${live} 个文件上传中 · ${ugTasks.length} 个任务`
+      : (ugTasks.length ? `${ugTasks.length} 个任务` : '暂无上传任务')
+    return
+  }
   const refs = [...tasks.values()]
   const active = refs.filter((r) => r.live).length
-  const badge = $('taskCount')
-  badge.textContent = String(active)
-  badge.classList.toggle('hidden', active === 0)
   $('taskSummary').textContent = active
     ? `${active} 个进行中 · ${refs.length} 条记录`
     : (refs.length ? `${refs.length} 条记录` : '暂无任务')
 }
 
 function updateTopbarStatus() {
-  const running = [...tasks.values()].some((r) => r.live)
-  $('topbarStatusBox').classList.toggle('busy', running)
-  $('topbarStatus').textContent = running ? '下载中' : '就绪'
+  const downloading = [...tasks.values()].some((r) => r.live)
+  const uploading = [...uploadEntries.values()].some((r) => r.live)
+  $('topbarStatusBox').classList.toggle('busy', downloading || uploading)
+  $('topbarStatus').textContent = downloading ? '下载中' : (uploading ? '上传中' : '就绪')
 }
 
 function updateOverallProgress() {
@@ -304,6 +322,162 @@ function renderTaskSpeed() {
     el.textContent = ''
     el.classList.add('hidden')
   }
+}
+
+function renderUploadSpeed() {
+  let total = 0
+  for (const ref of uploadEntries.values()) if (ref.live && ref.speed) total += ref.speed
+  const el = $('taskSpeedUp')
+  if (total > 0) {
+    el.textContent = '↑ ' + fmtSpeed(total)
+    el.classList.remove('hidden')
+  } else {
+    el.textContent = ''
+    el.classList.add('hidden')
+  }
+}
+
+/* ---------------- 任务列表 · 上传模块 ---------------- */
+function uploadEntryKey(p) {
+  return String(p.taskId || '') + '|' + String(p.file || '')
+}
+
+function ensureUploadEntry(p) {
+  const key = uploadEntryKey(p)
+  const found = uploadEntries.get(key)
+  if (found) return found
+  const box = $('uploadActive')
+  const empty = box.querySelector('.empty')
+  if (empty) empty.remove()
+
+  const el = document.createElement('div')
+  el.className = 'task'
+  el.innerHTML = `
+    <div class="task-head">
+      <div class="task-title"></div>
+      <span class="task-pct">0%</span>
+    </div>
+    <div class="bar"><i></i></div>
+    <div class="task-info">准备上传…</div>`
+  el.querySelector('.task-title').textContent = p.file || '未命名文件'
+  box.appendChild(el)
+
+  const ref = {
+    el,
+    bar: el.querySelector('.bar'),
+    fill: el.querySelector('.bar > i'),
+    info: el.querySelector('.task-info'),
+    pct: el.querySelector('.task-pct'),
+    live: true,
+    percent: 0,
+    taskId: String(p.taskId || ''),
+    dest: p.dest || '',
+    lastDone: 0,
+    lastTs: 0,
+    speed: 0
+  }
+  uploadEntries.set(key, ref)
+  pruneUploadEntries()
+  return ref
+}
+
+function pruneUploadEntries() {
+  if (uploadEntries.size <= 100) return
+  for (const [key, ref] of uploadEntries) {
+    if (ref.live) continue
+    ref.el.remove()
+    uploadEntries.delete(key)
+    if (uploadEntries.size <= 100) return
+  }
+}
+
+function markUploadEntryDone(ref, dest) {
+  ref.live = false
+  ref.percent = 100
+  ref.speed = 0
+  ref.bar.classList.remove('fail')
+  ref.bar.classList.add('done')
+  ref.fill.style.width = '100%'
+  ref.pct.textContent = '100%'
+  ref.info.textContent = dest ? `已上传 → ${dest}` : '已上传'
+  updateTaskBadge()
+  updateUploadOverall()
+  updateTopbarStatus()
+}
+
+function markUploadEntryFailed(ref, message) {
+  ref.live = false
+  ref.percent = 100
+  ref.speed = 0
+  ref.bar.classList.add('fail')
+  ref.fill.style.width = '100%'
+  ref.pct.textContent = '失败'
+  ref.info.textContent = '失败：' + (message || '未知错误')
+  updateTaskBadge()
+  updateUploadOverall()
+  updateTopbarStatus()
+}
+
+function updateUploadOverall() {
+  const refs = [...uploadEntries.values()]
+  const box = $('uploadOverall')
+  if (!refs.length) {
+    box.classList.add('hidden')
+    return
+  }
+  let sum = 0
+  let settled = 0
+  for (const r of refs) {
+    sum += Math.max(0, Math.min(100, Number(r.percent) || 0))
+    if (!r.live) settled++
+  }
+  const pct = Math.round(sum / refs.length)
+  box.classList.remove('hidden')
+  $('uploadOverallFill').style.width = pct + '%'
+  $('uploadOverallText').textContent = `${pct}% · ${settled}/${refs.length} 个完成`
+}
+
+function renderUploadHistory() {
+  const box = $('uploadHistory')
+  box.innerHTML = ''
+  const done = ugTasks.filter((t) => t.last)
+  if (!done.length) return
+  for (const t of done) {
+    const el = document.createElement('div')
+    el.className = 'task'
+    el.innerHTML = `
+      <div class="task-head">
+        <div class="task-title"></div>
+        <span class="task-pct"></span>
+      </div>
+      <div class="task-info"></div>`
+    el.querySelector('.task-title').textContent = `${t.subName || t.subKey} → ${t.dest}`
+    el.querySelector('.task-pct').textContent = fmtAgo(t.last.at)
+    const parts = [`上传 ${t.last.uploaded} 个`]
+    if (t.last.skipped) parts.push(`跳过 ${t.last.skipped} 个`)
+    if (t.last.failed) parts.push(`失败 ${t.last.failed} 个`)
+    if (t.last.bytes) parts.push(fmtSize(t.last.bytes))
+    if (t.last.error) parts.push(t.last.error)
+    el.querySelector('.task-info').textContent = parts.join(' · ')
+    box.appendChild(el)
+  }
+}
+
+async function reloadUploadHistory() {
+  await loadUploadTasks()
+  renderUploadHistory()
+}
+
+function setTaskModule(name) {
+  taskModule = name === 'upload' ? 'upload' : 'download'
+  for (const b of document.querySelectorAll('.task-rail-btn')) {
+    b.classList.toggle('active', b.dataset.taskmodule === taskModule)
+  }
+  for (const p of document.querySelectorAll('.task-pane')) {
+    p.classList.toggle('hidden', p.dataset.taskpane !== taskModule)
+  }
+  if (taskModule === 'upload') reloadUploadHistory().catch(() => {})
+  updateTaskBadge()
 }
 
 // 失败/取消后按钮改为可点击的「清除」，否则会留下一个点了没反应的「取消」
@@ -355,6 +529,7 @@ function markTaskFailed(ref, err) {
 function openTaskModal() {
   $('taskModal').classList.remove('hidden')
   $('taskToggle').classList.add('active')
+  if (taskModule === 'upload') reloadUploadHistory().catch(() => {})
 }
 
 function closeTaskModal() {
@@ -2218,6 +2393,10 @@ $('filterModal').addEventListener('click', (e) => {
 $('taskToggle').addEventListener('click', openTaskModal)
 $('taskClose').addEventListener('click', closeTaskModal)
 $('taskClear').addEventListener('click', clearTaskHistory)
+for (const btn of document.querySelectorAll('.task-rail-btn')) {
+  btn.addEventListener('click', () => setTaskModule(btn.dataset.taskmodule))
+}
+
 $('taskModal').addEventListener('click', (e) => {
   if (e.target === $('taskModal')) closeTaskModal()
 })
@@ -2458,15 +2637,62 @@ window.api.onLog((line) => {
 
 window.api.onUploadProgress((p) => {
   if (!p) return
-  if (p.error) {
+  const ref = ensureUploadEntry(p)
+  const pct = p.total ? Math.min(100, (p.done / p.total) * 100) : 0
+  if (p.phase === 'error') {
     setUgStatus(`上传 ${p.file} 失败：${p.error}`)
+    markUploadEntryFailed(ref, p.error)
+    renderUploadSpeed()
     return
   }
-  const pct = p.total ? Math.min(100, (p.done / p.total) * 100) : 0
+  if (p.phase === 'done') {
+    setUgStatus(`已上传 ${p.index}/${p.count}：${p.file}`, true)
+    markUploadEntryDone(ref, p.dest)
+    renderUploadSpeed()
+    return
+  }
   setUgStatus(`正在上传 ${p.index}/${p.count}：${p.file} ${pct.toFixed(0)}%`, true)
+  if (p.phase === 'start') {
+    ref.info.textContent = `准备上传 · 第 ${p.index}/${p.count} 个`
+    updateTaskBadge()
+    updateUploadOverall()
+    updateTopbarStatus()
+    return
+  }
+  ref.fill.style.width = Math.max(1, pct) + '%'
+  ref.percent = pct
+  ref.pct.textContent = Math.round(pct) + '%'
+  const now = Date.now()
+  if (now - ref.lastTs >= 500) {
+    if (ref.lastTs) {
+      const bps = (p.done - ref.lastDone) / ((now - ref.lastTs) / 1000)
+      ref.speed = bps > 0 ? bps : 0
+    }
+    ref.lastDone = p.done
+    ref.lastTs = now
+  }
+  const parts = []
+  if (p.total) parts.push(`${(p.done / 1048576).toFixed(1)}/${(p.total / 1048576).toFixed(1)} MB`)
+  if (ref.speed) parts.push(fmtSpeed(ref.speed))
+  parts.push(`第 ${p.index}/${p.count} 个`)
+  ref.info.textContent = parts.join(' · ')
+  updateTaskBadge()
+  updateUploadOverall()
+  updateTopbarStatus()
+  renderUploadSpeed()
 })
 
-window.api.onUploadDone(() => loadUploadTasks())
+window.api.onUploadDone((p) => {
+  if (p && p.id) {
+    for (const ref of uploadEntries.values()) {
+      if (ref.taskId !== String(p.id) || !ref.live) continue
+      if (p.failed) markUploadEntryFailed(ref, p.error || '上传失败')
+      else markUploadEntryDone(ref, ref.dest)
+    }
+  }
+  renderUploadSpeed()
+  reloadUploadHistory().catch(() => {})
+})
 
 /* ---------------- 启动 ---------------- */
 refreshAuth()

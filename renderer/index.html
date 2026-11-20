@@ -18,6 +18,7 @@
         <span class="topbar-dot"></span>
         <span id="topbarStatus">就绪</span>
       </div>
+      <span id="taskSpeedUp" class="topbar-speed up hidden"></span>
       <span id="taskSpeed" class="topbar-speed hidden"></span>
       <button id="taskToggle" class="topbar-task-btn" type="button">
         <span class="topbar-task-ico">☰</span>
@@ -407,7 +408,7 @@
   </div>
 
   <div id="taskModal" class="modal-mask hidden" role="dialog" aria-modal="true" aria-labelledby="taskModalTitle">
-    <div class="modal">
+    <div class="modal task-modal">
       <div class="modal-head">
         <h2 id="taskModalTitle">任务列表</h2>
         <span id="taskSummary" class="modal-sub">暂无任务</span>
@@ -416,16 +417,35 @@
           <button id="taskClose" class="modal-close" type="button" aria-label="关闭">×</button>
         </div>
       </div>
-      <div class="modal-body">
-        <div id="taskOverall" class="task-overall hidden">
-          <div class="task-overall-head">
-            <span>总体进度</span>
-            <span id="taskOverallText">0%</span>
+      <div class="task-body">
+        <aside class="task-rail">
+          <button class="task-rail-btn active" data-taskmodule="download" type="button">下载</button>
+          <button class="task-rail-btn" data-taskmodule="upload" type="button">上传</button>
+        </aside>
+        <div class="task-panes">
+          <div class="modal-body task-pane" data-taskpane="download">
+            <div id="taskOverall" class="task-overall hidden">
+              <div class="task-overall-head">
+                <span>总体进度</span>
+                <span id="taskOverallText">0%</span>
+              </div>
+              <div class="bar"><i id="taskOverallFill"></i></div>
+            </div>
+            <div id="activeTasks" class="tasks"><div class="empty">还没有任务</div></div>
+            <div id="tasks" class="tasks task-history"></div>
           </div>
-          <div class="bar"><i id="taskOverallFill"></i></div>
+          <div class="modal-body task-pane hidden" data-taskpane="upload">
+            <div id="uploadOverall" class="task-overall hidden">
+              <div class="task-overall-head">
+                <span>上传进度</span>
+                <span id="uploadOverallText">0%</span>
+              </div>
+              <div class="bar"><i id="uploadOverallFill"></i></div>
+            </div>
+            <div id="uploadActive" class="tasks"><div class="empty">还没有上传中的文件</div></div>
+            <div id="uploadHistory" class="tasks task-history"></div>
+          </div>
         </div>
-        <div id="activeTasks" class="tasks"><div class="empty">还没有任务</div></div>
-        <div id="tasks" class="tasks task-history"></div>
       </div>
     </div>
   </div>

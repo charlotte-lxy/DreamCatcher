@@ -355,7 +355,12 @@ body {
 .modal-body .status { margin-top: 10px; }
 
 /* ---------- 任务列表左侧模块栏 ---------- */
-.task-modal { width: min(820px, 100%); }
+/* 高度固定，不随内容多少缩放 */
+.task-modal {
+  width: min(820px, 100%);
+  height: min(620px, calc(100vh - 48px));
+  max-height: none;
+}
 .task-body { display: flex; flex: 1; min-height: 0; }
 .task-rail {
   width: 132px; flex: none; display: flex; flex-direction: column; gap: 6px;

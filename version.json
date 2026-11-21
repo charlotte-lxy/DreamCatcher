@@ -1,10 +1,17 @@
 {
-  "version": "0.6.3",
+  "version": "0.6.4",
   "date": "2026-11-21",
-  "asar": "release/app-0.6.3.asar",
-  "sha256": "e60701908f8ca133362fca02b422dcca06bd6bab34bf14f3db2a4dea3ed886fa",
-  "size": 282780,
+  "asar": "release/app-0.6.4.asar",
+  "sha256": "2414922d9587ff76063f8286d44c6749332a00714668506d9e5f5495857e0b4a",
+  "size": 282890,
   "releases": [
+    {
+      "version": "0.6.4",
+      "date": "2026-11-21",
+      "items": [
+        "任务列表弹窗高度固定，不再随任务条数多少缩放"
+      ]
+    },
     {
       "version": "0.6.3",
       "date": "2026-11-21",

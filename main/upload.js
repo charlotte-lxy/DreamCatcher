@@ -95,16 +95,58 @@ async function candidates(task, downloadDir) {
   return [...found.values()]
 }
 
+// 本地候选文件：索引只登记下载那一刻的文件，老文件要靠扫同一目录补齐
+async function localFiles(task, downloadDir) {
+  const found = new Map()
+  const add = (p) => {
+    try {
+      const st = fs.statSync(p)
+      if (!st.isFile() || !st.size) return
+      if (!subs.MEDIA_EXT.has(path.extname(p).toLowerCase())) return
+      found.set(path.basename(p) + '\u0000' + st.size, { path: p, size: st.size })
+    } catch (_) { /* 文件已被删除或正在写入 */ }
+  }
+  const dirs = new Set()
+  for (const e of medialib.entriesForKey(task.subKey)) {
+    dirs.add(path.dirname(e.file))
+    add(e.file)
+  }
+  for (const item of await candidates(task, downloadDir)) {
+    dirs.add(path.dirname(item.path))
+    add(item.path)
+  }
+  for (const dir of dirs) {
+    let names = []
+    try {
+      names = fs.readdirSync(dir)
+    } catch (_) {
+      continue
+    }
+    for (const name of names) add(path.join(dir, name))
+  }
+  return [...found.values()]
+}
+
 const running = new Map()
 
-async function runOne(task, { downloadDir, only, onProgress } = {}) {
-  if (running.has(task.id)) return { skipped: true, reason: '任务正在执行' }
-  const job = doRun(task, { downloadDir, only, onProgress })
-  running.set(task.id, job)
-  try {
-    return await job
-  } finally {
-    running.delete(task.id)
+// 同一任务同时只跑一次：后来的请求排队等前一次跑完再跑，
+// 这样两个文件同时下载完成时，第二个不会被「任务正在执行」直接丢掉
+async function runOne(task, opts = {}) {
+  for (;;) {
+    const prev = running.get(task.id)
+    if (prev) {
+      try {
+        await prev
+      } catch (_) { /* 前一次失败不影响这一次 */ }
+      continue
+    }
+    const job = doRun(task, opts)
+    running.set(task.id, job)
+    try {
+      return await job
+    } finally {
+      running.delete(task.id)
+    }
   }
 }
 
@@ -227,7 +269,7 @@ async function clearUploadedLocal(id, { downloadDir } = {}) {
   const remote = await ug.listDir(task.dest)
   const have = new Set((remote.files || []).map((f) => f.name + '\u0000' + f.size))
   const result = { deleted: 0, kept: 0, failed: 0, bytes: 0, error: '' }
-  for (const item of await candidates(task, downloadDir)) {
+  for (const item of await localFiles(task, downloadDir)) {
     const name = path.basename(item.path)
     if (!have.has(name + '\u0000' + item.size)) {
       result.kept++

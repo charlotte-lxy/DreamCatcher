@@ -219,6 +219,32 @@ async function uploadedNames(subKey) {
   return names
 }
 
+// 删除本地已上传到本任务目录的文件：只删云端同名同大小的，没传过或大小不同的保留
+async function clearUploadedLocal(id, { downloadDir } = {}) {
+  const task = list().find((t) => t.id === id)
+  if (!task) throw new Error('上传任务不存在')
+  await ug.ensureDir(task.dest)
+  const remote = await ug.listDir(task.dest)
+  const have = new Set((remote.files || []).map((f) => f.name + '\u0000' + f.size))
+  const result = { deleted: 0, kept: 0, failed: 0, bytes: 0, error: '' }
+  for (const item of await candidates(task, downloadDir)) {
+    const name = path.basename(item.path)
+    if (!have.has(name + '\u0000' + item.size)) {
+      result.kept++
+      continue
+    }
+    try {
+      await fs.promises.rm(item.path, { force: true })
+      result.deleted++
+      result.bytes += item.size
+    } catch (err) {
+      result.failed++
+      result.error = String(err.message || err)
+    }
+  }
+  return result
+}
+
 // 清除上传历史：只清掉每个任务的上次结果，任务配置和云端文件都不动
 function clearHistory() {
   const l = list()
@@ -233,5 +259,5 @@ function clearHistory() {
 }
 
 module.exports = {
-  list, save, remove, updateTask, candidates, runTask, autoAfterDownload, autoAll, uploadedNames, clearHistory
+  list, save, remove, updateTask, candidates, runTask, autoAfterDownload, autoAll, uploadedNames, clearUploadedLocal, clearHistory
 }

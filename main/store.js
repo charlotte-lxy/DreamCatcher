@@ -11,7 +11,8 @@ const DEFAULTS = {
   maxSpeed: 0, // KB/s，0 表示不限速
   subAutoCheck: false, // 定时自动检测订阅更新
   subCheckInterval: 60, // 自动检测间隔（分钟）
-  subLatestOnly: false // 只从最新视频往回拉，遇到已下载/已上传的即停
+  subLatestOnly: false, // 只从最新视频往回拉，遇到已下载/已上传的即停
+  subAutoDownload: false // 自动检测发现新视频时直接加入下载队列
 }
 
 function baseDir() {

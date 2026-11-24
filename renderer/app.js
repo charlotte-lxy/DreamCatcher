@@ -86,9 +86,8 @@ const SUBBARS = {
   settings: {
     title: '设置',
     items: [
-      { id: 'download', label: '下载目录' },
+      { id: 'download', label: '订阅下载' },
       { id: 'account', label: '账号管理' },
-      { id: 'subs', label: '订阅检测' },
       { id: 'network', label: '网络' },
       { id: 'update', label: '更新' }
     ]
@@ -2025,6 +2024,7 @@ async function loadSettings() {
     $('subAutoCheck').checked = !!settingsCache.subAutoCheck
     $('subCheckInterval').value = settingsCache.subCheckInterval || 60
     $('subLatestOnly').checked = !!settingsCache.subLatestOnly
+    $('subAutoDownload').checked = !!settingsCache.subAutoDownload
     syncProxyInput()
   } catch (_) { /* 读取失败沿用默认值 */ }
 }
@@ -2033,6 +2033,7 @@ async function loadSettings() {
 let ugStatus = null
 let ugConfig = null
 let ugTasks = []
+let ugEditingId = ''
 let ugBusy = false
 let ugDirPath = '/home'
 
@@ -2200,17 +2201,17 @@ function renderUploadTasks() {
     run.textContent = '立即同步'
     run.dataset.act = 'run'
     run.dataset.id = t.id
-    const mode = document.createElement('button')
-    mode.className = 'btn ghost small'
-    mode.textContent = t.mode === 'auto' ? '改为手动' : '改为自动'
-    mode.dataset.act = 'mode'
-    mode.dataset.id = t.id
+    const edit = document.createElement('button')
+    edit.className = 'btn ghost small'
+    edit.textContent = '编辑任务'
+    edit.dataset.act = 'edit'
+    edit.dataset.id = t.id
     const del = document.createElement('button')
     del.className = 'btn ghost small'
     del.textContent = '删除'
     del.dataset.act = 'remove'
     del.dataset.id = t.id
-    actions.append(run, mode, del)
+    actions.append(run, edit, del)
 
     row.append(type, main, actions)
     box.appendChild(row)
@@ -2227,16 +2228,38 @@ function ugRootPath() {
   return user ? `/home/${user}` : '/home'
 }
 
-async function openUgTaskModal() {
+// 编辑已有任务时把添加任务时的所有选项都回填，省得删了重建
+async function openUgTaskModal(task) {
+  ugEditingId = task ? task.id : ''
+  $('ugTaskTitle').textContent = task ? '编辑上传任务' : '添加上传任务'
+  $('ugEditTools').classList.toggle('hidden', !task)
+  $('ugClearStatus').textContent = ''
+  $('ugClearStatus').classList.remove('ok')
+  $('ugDest').value = task ? task.dest : ''
+  $('ugMode').value = task ? task.mode : 'manual'
+  $('ugDeleteLocal').checked = !!task && !!task.deleteLocal
+  const share = !!task && (task.dest === '/volume1' || task.dest.startsWith('/volume1/'))
+  $('ugRoot').value = share ? 'share' : 'home'
   $('ugTaskModal').classList.remove('hidden')
-  $('ugDest').value = ''
   setUgStatus('')
   if (!ugConfig || !ugConfig.username) await loadUgreenConfig()
   await loadUploadSubs()
+  if (task) {
+    $('ugSub').value = task.subKey
+    // 订阅可能已经被删掉，补一个选项不然选择框会跳回第一条
+    if ($('ugSub').value !== task.subKey) {
+      const opt = document.createElement('option')
+      opt.value = task.subKey
+      opt.textContent = (task.subName || task.subKey) + '（订阅已删除）'
+      $('ugSub').appendChild(opt)
+      $('ugSub').value = task.subKey
+    }
+  }
 }
 
 function closeUgTaskModal() {
   $('ugTaskModal').classList.add('hidden')
+  ugEditingId = ''
 }
 
 async function createUploadTask() {
@@ -2258,7 +2281,10 @@ async function createUploadTask() {
     deleteLocal: $('ugDeleteLocal').checked,
     enabled: true
   }
-  if (exist) task.id = exist.id
+  if (ugEditingId) {
+    if (exist && exist.id !== ugEditingId) return setUgStatus('已经有相同订阅和上传位置的任务')
+    task.id = ugEditingId
+  } else if (exist) task.id = exist.id
   $('ugCreate').disabled = true
   try {
     ugTasks = await window.api.saveUpload(task)
@@ -2334,9 +2360,31 @@ $('ugGoAccount').addEventListener('click', () => {
   switchModule('settings')
 })
 
-$('ugAdd').addEventListener('click', openUgTaskModal)
+$('ugAdd').addEventListener('click', () => openUgTaskModal())
 $('ugCreate').addEventListener('click', createUploadTask)
 $('ugCancel').addEventListener('click', closeUgTaskModal)
+$('ugClearLocal').addEventListener('click', async () => {
+  const task = ugTasks.find((t) => t.id === ugEditingId)
+  if (!task) return
+  const tip = `删除「${task.subName || task.subKey}」已经传到绿联云的本地文件？\n只删云端有同名同大小的，没上传过的会保留，删除后无法恢复。`
+  if (!window.confirm(tip)) return
+  $('ugClearLocal').disabled = true
+  $('ugClearStatus').textContent = '正在比对云端文件…'
+  $('ugClearStatus').classList.remove('ok')
+  try {
+    const r = await window.api.clearUploadedLocal(task.id)
+    const parts = [`已删除 ${r.deleted} 个（${fmtSize(r.bytes)}）`]
+    if (r.kept) parts.push(`未上传的 ${r.kept} 个保留`)
+    if (r.failed) parts.push(`${r.failed} 个删除失败${r.error ? '：' + humanizeError(r.error) : ''}`)
+    $('ugClearStatus').textContent = parts.join('，')
+    $('ugClearStatus').classList.toggle('ok', !r.failed)
+    loadUploadTasks()
+  } catch (err) {
+    $('ugClearStatus').textContent = '清除失败：' + humanizeError(err.message)
+  } finally {
+    $('ugClearLocal').disabled = false
+  }
+})
 $('ugTaskClose').addEventListener('click', closeUgTaskModal)
 $('ugTaskModal').addEventListener('click', (e) => {
   if (e.target === $('ugTaskModal')) closeUgTaskModal()
@@ -2388,15 +2436,8 @@ $('ugTasks').addEventListener('click', async (e) => {
     }
     return
   }
-  if (btn.dataset.act === 'mode') {
-    const next = task.mode === 'auto' ? 'manual' : 'auto'
-    try {
-      ugTasks = await window.api.saveUpload(Object.assign({}, task, { mode: next }))
-      renderUploadTasks()
-      setUgStatus(next === 'auto' ? '已改为自动同步' : '已改为手动同步', true)
-    } catch (err) {
-      setUgStatus('修改失败：' + humanizeError(err.message))
-    }
+  if (btn.dataset.act === 'edit') {
+    openUgTaskModal(task)
     return
   }
   ugBusy = true
@@ -2625,7 +2666,8 @@ $('saveSubsSettings').addEventListener('click', async () => {
     settingsCache = await window.api.setSettings(Object.assign({}, settingsCache, {
       subAutoCheck: $('subAutoCheck').checked,
       subCheckInterval: minutes,
-      subLatestOnly: $('subLatestOnly').checked
+      subLatestOnly: $('subLatestOnly').checked,
+      subAutoDownload: $('subAutoDownload').checked
     }))
     $('subsSettingsStatus').textContent = '已保存'
     $('subsSettingsStatus').classList.add('ok')
@@ -2708,11 +2750,25 @@ window.api.onSubsAuto((p) => {
   const found = (p && p.found) || []
   if (!found.length) return
   loadSubscriptions()
+  // 自动下载交给下载队列，任务列表里能和手动下载一样看到进度
+  let queued = 0
+  if (p.autoDownload) {
+    let index = 0
+    for (const f of found) {
+      for (const v of f.videos || []) {
+        downloadVideoItem(v, 'a', index++, f.key)
+        queued++
+      }
+    }
+  }
   for (const site of ['bilibili', 'hanime']) {
     const mine = found.filter((f) => f.site === site)
     if (!mine.length) continue
     const names = mine.map((f) => f.name).slice(0, 3).join('、')
-    setSubNotice(site, `自动检测发现新视频：${names}${mine.length > 3 ? ` 等 ${mine.length} 个订阅` : ''}`, true)
+    const more = mine.length > 3 ? ` 等 ${mine.length} 个订阅` : ''
+    setSubNotice(site, p.autoDownload && queued
+      ? `自动检测到新视频，已加入下载：${names}${more}`
+      : `自动检测发现新视频：${names}${more}`, true)
   }
 })
 

@@ -320,8 +320,18 @@ async function autoCheckSubscriptions() {
         sub.lastMissing = comparison.missing
         if (!sub.name && r.author) sub.name = r.author
         // 第一次检测只当基线，不然会把全部历史视频都报成「新增」
-        const fresh = prevIds ? r.videos.filter((v) => !prevIds.has(String(v.id))).length : 0
-        if (fresh > 0) found.push({ key: sub.key, site: sub.site, name: sub.name, fresh, missing: comparison.missing })
+        const fresh = prevIds ? r.videos.filter((v) => !prevIds.has(String(v.id))) : []
+        if (fresh.length) {
+          const entry = { key: sub.key, site: sub.site, name: sub.name, fresh: fresh.length, missing: comparison.missing }
+          // 自动下载交给渲染层发起，任务列表和下载队列都复用现有那一套
+          if (settings.subAutoDownload) {
+            const freshIds = new Set(fresh.map((v) => String(v.id)))
+            entry.videos = comparison.videos
+              .filter((v) => !v.downloaded && !v.uploaded && freshIds.has(String(v.id)))
+              .map((v) => ({ id: v.id, title: v.title, url: v.url, duration: v.duration, subAuthor: v.subAuthor || '' }))
+          }
+          found.push(entry)
+        }
       } catch (err) {
         log(`自动检测失败 ${sub.name}: ${err.message}`)
       }
@@ -333,7 +343,7 @@ async function autoCheckSubscriptions() {
   }
   if (!found.length) return
   log(`自动检测完成: ${found.map((f) => `${f.name} 新增 ${f.fresh}`).join('，')}`)
-  if (win && !win.isDestroyed()) win.webContents.send('subs:auto', { checkedAt: Date.now(), found })
+  if (win && !win.isDestroyed()) win.webContents.send('subs:auto', { checkedAt: Date.now(), found, autoDownload: !!settings.subAutoDownload })
 }
 
 // 开关或间隔改动后重排定时器；关掉时清空
@@ -757,7 +767,8 @@ function registerIpc() {
       maxSpeed,
       subAutoCheck: next.subAutoCheck == null ? !!settings.subAutoCheck : !!next.subAutoCheck,
       subCheckInterval: Math.max(5, Math.min(1440, parseInt(intervalRaw, 10) || 60)),
-      subLatestOnly: next.subLatestOnly == null ? !!settings.subLatestOnly : !!next.subLatestOnly
+      subLatestOnly: next.subLatestOnly == null ? !!settings.subLatestOnly : !!next.subLatestOnly,
+      subAutoDownload: next.subAutoDownload == null ? !!settings.subAutoDownload : !!next.subAutoDownload
     })
     store.write('settings.json', settings)
     await auth.applyProxy(settings)
@@ -1023,6 +1034,12 @@ function registerIpc() {
     log(`上传任务 ${id}: 上传 ${r.uploaded} 跳过 ${r.skipped} 失败 ${r.failed}${r.error ? ' ' + r.error : ''}`)
     if (win && !win.isDestroyed()) win.webContents.send('upload:done', Object.assign({ id }, r))
     return Object.assign({ ok: !r.error }, r)
+  })
+
+  ipcMain.handle('upload:clearUploadedLocal', async (_e, id) => {
+    const r = await upload.clearUploadedLocal(id, { downloadDir: effectiveDownloadDir() })
+    log(`清除已上传的本地文件 ${id}: 删除 ${r.deleted} 个 / 保留 ${r.kept} 个${r.failed ? ' / 失败 ' + r.failed : ''}${r.error ? ' ' + r.error : ''}`)
+    return r
   })
 
   ipcMain.handle('video:download', async (_e, payload) => {

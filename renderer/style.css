@@ -137,6 +137,7 @@ body {
 
 .status { min-height: 20px; margin-top: 10px; font-size: 13px; color: #f0a04b; }
 .status.ok { color: #59c47a; }
+.row .status { margin-top: 0; }
 .hint { color: #6c7480; font-size: 12px; margin: 8px 0 0; }
 
 .meta { display: flex; gap: 16px; margin-top: 14px; }

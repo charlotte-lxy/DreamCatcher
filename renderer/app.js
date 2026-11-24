@@ -1629,9 +1629,9 @@ function summaryTypeLabel(g) {
 }
 
 function summaryBaseText(g) {
-  if (!g.hasLocal) return '本地暂无该站视频，列出全部'
+  if (!g.hasLocal) return '本地与网盘都还没有该站视频，列出全部'
   const when = g.latestLocalDateText || (g.latestLocalCreated ? fmtDate(g.latestLocalCreated) : '')
-  return `本地最新：${when}${g.latestLocalTitle ? ' · ' + g.latestLocalTitle : ''}`
+  return `最新已有：${when}${g.latestLocalTitle ? ' · ' + g.latestLocalTitle : ''}`
 }
 
 function summaryGroupEl(g) {

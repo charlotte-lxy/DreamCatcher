@@ -223,15 +223,15 @@ async function knownVideoIds(sub, local) {
   return ids
 }
 
-async function listSubscriptionVideos(sub, onProgress, local) {
+async function listSubscriptionVideos(sub, onProgress, local, knownIds) {
   if (sub.site === 'hanime') {
     const proxyUrl = await proxyFor(sub.url)
     return hanime.listSubscription(sub.url, { proxy: proxyUrl, onProgress })
   }
-  const stopIds = settings.subLatestOnly && local ? await knownVideoIds(sub, local) : null
+  const known = settings.subLatestOnly && local ? (knownIds || await knownVideoIds(sub, local)) : null
   return bili.listUpVideos(sub.url || `https://space.bilibili.com/${sub.mid}`, (p) => {
     if (onProgress) onProgress(Object.assign({ site: 'bilibili' }, p))
-  }, stopIds && stopIds.size ? { stopIds } : {})
+  }, known && known.size ? { stopIds: known } : {})
 }
 
 function sendSummaryProgress(p) {
@@ -251,14 +251,16 @@ async function buildUpdateSummary() {
       const sub = list[i]
       sendSummaryProgress({ done: i, total: list.length, current: sub.name })
       try {
-        const r = await listSubscriptionVideos(sub, null, local)
+        // 本地已下载 + 云端已上传都算「已有」：订阅里的过滤与忽略清单照旧生效，
+        // 这样上传后删掉本地文件的视频不会又冒出来
+        const known = await knownVideoIds(sub, local)
+        const r = await listSubscriptionVideos(sub, null, local, known)
         medialib.saveVideoList(sub.key, r.videos)
         const filtered = applySubFilter(r.videos || [], sub)
-        const localMap = sub.site === 'hanime' ? local.hanime : local.bilibili
         const ignored = new Set((sub.ignored || []).map((v) => String(v.id)))
         let cutoff = -1
         for (let j = 0; j < filtered.length; j++) {
-          if (localMap.has(String(filtered[j].id))) {
+          if (known.has(String(filtered[j].id))) {
             cutoff = j
             break
           }
@@ -266,7 +268,7 @@ async function buildUpdateSummary() {
         const base = cutoff >= 0 ? filtered.slice(0, cutoff) : filtered
         const author = subDownloadAuthor(sub)
         const videos = base
-          .filter((v) => !localMap.has(String(v.id)) && !ignored.has(String(v.id)))
+          .filter((v) => !known.has(String(v.id)) && !ignored.has(String(v.id)))
           .map((v) => Object.assign({}, v, { selected: true }, author ? { subAuthor: author } : {}))
         if (videos.length) {
           groups.push({

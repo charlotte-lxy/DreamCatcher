@@ -44,8 +44,9 @@ test('buildDownloadArgs: 参数齐全且 URL 在最后', () => {
   assert.strictEqual(args[args.indexOf('-f') + 1], 'bv*[height<=1080]+ba/b[height<=1080]')
   const o = args[args.indexOf('-o') + 1]
   assert.ok(o.startsWith(outDir), '输出目录没带上: ' + o)
-  assert.ok(o.includes('%(uploader)s_%(upload_date>%Y-%m-%d)s_%(title)s'), '缺少 UP 名+上传日期前缀: ' + o)
-  assert.ok(o.includes('%(title)s'))
+  assert.ok(o.includes('%(uploader).40s_%(upload_date>%Y-%m-%d)s_%(title).60s'), '缺少 UP 名+上传日期前缀: ' + o)
+  assert.ok(o.includes('[%(id)s]'), 'id 必须留在文件名末尾，去重和已上传比对靠它: ' + o)
+  assert.ok(o.includes('%(title).60s'), '标题要截断，否则超长标题建不了文件: ' + o)
   assert.ok(!args.includes('--proxy'))
 })
 
@@ -94,6 +95,9 @@ test('store: 默认代理模式为 system', () => {
   assert.strictEqual(store.DEFAULTS.proxyMode, 'system')
   assert.strictEqual(store.DEFAULTS.concurrency, 2)
   assert.strictEqual(store.DEFAULTS.maxSpeed, 0)
+  assert.strictEqual(store.DEFAULTS.subAutoCheck, false)
+  assert.strictEqual(store.DEFAULTS.subCheckInterval, 60)
+  assert.strictEqual(store.DEFAULTS.subLatestOnly, false)
 })
 
 test('bvidFromFilename: 只识别文件名中的完整 BV 号', () => {
@@ -223,6 +227,41 @@ test('isChargingVideo: 合作视频不算充电，elec_arc_type 也算', () => {
   assert.strictEqual(bili.isChargingVideo({ elec_arc_type: 1 }), true)
   assert.strictEqual(bili.isChargingVideo({ elec_arc_type: 2 }), true)
   assert.strictEqual(bili.isChargingVideo({ elec_arc_type: 0 }), false)
+})
+
+test('listUpVideos: 仅拉取最新时遇到已知视频就停', async () => {
+  const auth = require('../main/auth')
+  const bili = require('../main/bilibili')
+  const original = auth.getSession
+  const calls = []
+  const video = (id, created) => ({ bvid: id, title: '视频 ' + id, pic: '', length: '01:00', created, author: '测试 UP' })
+  auth.getSession = () => ({
+    fetch: async (url) => {
+      calls.push(String(url))
+      if (url.includes('/x/web-interface/nav')) {
+        return { ok: true, json: async () => ({ code: 0, data: { wbi_img: { img_url: 'https://i0.hdslb.com/' + 'a'.repeat(32) + '.png', sub_url: 'https://i0.hdslb.com/' + 'b'.repeat(32) + '.png' } } }) }
+      }
+      const u = new URL(url)
+      const special = u.searchParams.get('special_type')
+      const pn = Number(u.searchParams.get('pn'))
+      let body
+      if (!special && pn === 1) {
+        body = { code: 0, data: { page: { count: 3 }, list: { slist: [], vlist: [video('BV1new000001', 30), video('BV1old000001', 20)] } } }
+      } else if (!special && pn === 2) {
+        body = { code: 0, data: { page: { count: 3 }, list: { vlist: [video('BV1old000002', 10)] } } }
+      } else {
+        body = { code: 0, data: { page: { count: 1 }, list: { vlist: [] } } }
+      }
+      return { ok: true, json: async () => body }
+    }
+  })
+  try {
+    const r = await bili.listUpVideos('https://space.bilibili.com/123', () => {}, { stopIds: new Set(['BV1old000001']) })
+    assert.deepStrictEqual(r.videos.map((v) => v.id), ['BV1new000001'], '碰到已下载/已上传的视频后不应继续拉取')
+    assert.ok(!calls.some((u) => u.includes('pn=2') && !u.includes('special_type=charging')), '已知视频在第二页时不该再翻页')
+  } finally {
+    auth.getSession = original
+  }
 })
 
 test('listUpVideos: 默认列表与充电专属列表合并去重', async () => {

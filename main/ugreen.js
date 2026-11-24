@@ -102,10 +102,11 @@ function clearSession() {
   store.write(SESSION, tokenCache)
 }
 
-// 只检查本地缓存的 token，不发请求：用于自动同步前的静默判断
-function hasSession() {
-  const s = readSession()
-  return !!(s.token && Date.now() - s.ts < TOKEN_TTL)
+// 是否配置了账号密码：自动上传只据此决定要不要跑，token 过期会在上传时自动重新登录。
+// 不能看本地 token 缓存，token 只有 20 分钟有效期，过期后自动上传会静默失效。
+function configured() {
+  const c = getConfig()
+  return !!(c.username && c.password)
 }
 
 /* ---------------- HTTP ---------------- */
@@ -433,7 +434,7 @@ module.exports = {
   publicConfig,
   saveConfig,
   clearSession,
-  hasSession,
+  configured,
   test,
   listDir,
   ensureDir,

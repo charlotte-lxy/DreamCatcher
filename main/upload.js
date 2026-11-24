@@ -178,7 +178,7 @@ async function runTask(id, opts) {
 // 下载完成：只传刚下完的那一个文件，没完成的文件根本不会走到这里
 async function autoAfterDownload(subKey, file, opts) {
   if (!subKey || !file) return []
-  if (!ug.hasSession()) return []
+  if (!ug.configured()) return []
   const targets = tasksForKey(subKey).filter((t) => t.mode === 'auto')
   const out = []
   for (const t of targets) {
@@ -193,7 +193,7 @@ async function autoAfterDownload(subKey, file, opts) {
 
 // 启动时补一次全量自动同步，覆盖关闭程序期间漏掉的文件
 async function autoAll(opts) {
-  if (!ug.hasSession()) return []
+  if (!ug.configured()) return []
   const out = []
   for (const t of list().filter((x) => x.mode === 'auto' && x.enabled)) {
     try {
@@ -209,7 +209,7 @@ async function autoAll(opts) {
 async function uploadedNames(subKey) {
   const names = new Set()
   const tasks = tasksForKey(subKey)
-  if (!tasks.length || !ug.hasSession()) return names
+  if (!tasks.length || !ug.configured()) return names
   for (const dest of new Set(tasks.map((t) => t.dest))) {
     try {
       const r = await ug.listDir(dest)

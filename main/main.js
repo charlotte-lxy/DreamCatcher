@@ -208,14 +208,30 @@ async function buildSubComparison(sub, videos, localMap) {
   })
 }
 
-async function listSubscriptionVideos(sub, onProgress) {
+// 仅拉取最新时用来判定「翻到了旧视频」：本地已下载 + 云端已上传
+async function knownVideoIds(sub, local) {
+  const map = sub.site === 'hanime' ? local.hanime : local.bilibili
+  const ids = new Set(map.keys())
+  try {
+    for (const name of await upload.uploadedNames(sub.key)) {
+      const id = subs.idFromFilename(sub.site, name)
+      if (id) ids.add(id)
+    }
+  } catch (err) {
+    log(`读取已上传清单失败（仅拉取最新将只参考本地）: ${err.message}`)
+  }
+  return ids
+}
+
+async function listSubscriptionVideos(sub, onProgress, local) {
   if (sub.site === 'hanime') {
     const proxyUrl = await proxyFor(sub.url)
     return hanime.listSubscription(sub.url, { proxy: proxyUrl, onProgress })
   }
+  const stopIds = settings.subLatestOnly && local ? await knownVideoIds(sub, local) : null
   return bili.listUpVideos(sub.url || `https://space.bilibili.com/${sub.mid}`, (p) => {
     if (onProgress) onProgress(Object.assign({ site: 'bilibili' }, p))
-  })
+  }, stopIds && stopIds.size ? { stopIds } : {})
 }
 
 function sendSummaryProgress(p) {
@@ -235,7 +251,7 @@ async function buildUpdateSummary() {
       const sub = list[i]
       sendSummaryProgress({ done: i, total: list.length, current: sub.name })
       try {
-        const r = await listSubscriptionVideos(sub)
+        const r = await listSubscriptionVideos(sub, null, local)
         medialib.saveVideoList(sub.key, r.videos)
         const filtered = applySubFilter(r.videos || [], sub)
         const localMap = sub.site === 'hanime' ? local.hanime : local.bilibili
@@ -279,6 +295,60 @@ async function buildUpdateSummary() {
   }
   log(`更新汇总完成: ${groups.length} 个有更新, ${errors.length} 个失败`)
   return { groups, errors, checkedAt: Date.now() }
+}
+
+// 定时自动检测订阅：只刷新清单和「待下载」数量，不自动下载
+let autoCheckTimer = null
+let autoCheckRunning = false
+
+async function autoCheckSubscriptions() {
+  if (autoCheckRunning || !subscriptions.length) return
+  autoCheckRunning = true
+  const found = []
+  try {
+    const local = await subs.scanLocalMedia(effectiveDownloadDir())
+    for (const sub of subscriptions.slice()) {
+      const prev = medialib.videoCache(sub.key)
+      const prevIds = prev ? new Set(prev.ids) : null
+      try {
+        const r = await listSubscriptionVideos(sub, null, local)
+        const localMap = sub.site === 'hanime' ? local.hanime : local.bilibili
+        medialib.saveVideoList(sub.key, r.videos)
+        const comparison = await buildSubComparison(sub, r.videos, localMap)
+        sub.lastCheckAt = Date.now()
+        if (!r.stopped) sub.lastCount = comparison.videos.length
+        sub.lastMissing = comparison.missing
+        if (!sub.name && r.author) sub.name = r.author
+        // 第一次检测只当基线，不然会把全部历史视频都报成「新增」
+        const fresh = prevIds ? r.videos.filter((v) => !prevIds.has(String(v.id))).length : 0
+        if (fresh > 0) found.push({ key: sub.key, site: sub.site, name: sub.name, fresh, missing: comparison.missing })
+      } catch (err) {
+        log(`自动检测失败 ${sub.name}: ${err.message}`)
+      }
+      await sleep(500)
+    }
+    saveSubscriptions()
+  } finally {
+    autoCheckRunning = false
+  }
+  if (!found.length) return
+  log(`自动检测完成: ${found.map((f) => `${f.name} 新增 ${f.fresh}`).join('，')}`)
+  if (win && !win.isDestroyed()) win.webContents.send('subs:auto', { checkedAt: Date.now(), found })
+}
+
+// 开关或间隔改动后重排定时器；关掉时清空
+function scheduleSubAutoCheck() {
+  if (autoCheckTimer) clearTimeout(autoCheckTimer)
+  autoCheckTimer = null
+  if (!settings.subAutoCheck) return
+  const minutes = Math.max(5, Number(settings.subCheckInterval) || 60)
+  autoCheckTimer = setTimeout(async () => {
+    autoCheckTimer = null
+    await autoCheckSubscriptions()
+    scheduleSubAutoCheck()
+  }, minutes * 60 * 1000)
+  if (autoCheckTimer.unref) autoCheckTimer.unref()
+  log(`订阅自动检测已开启，每 ${minutes} 分钟一次`)
 }
 
 function sendSubProgress(p) {
@@ -678,15 +748,20 @@ function registerIpc() {
     const speedRaw = next.maxSpeed == null ? settings.maxSpeed : next.maxSpeed
     const concurrency = Math.max(1, Math.min(10, parseInt(concRaw, 10) || 2))
     const maxSpeed = Math.max(0, Number(speedRaw) || 0)
+    const intervalRaw = next.subCheckInterval == null ? settings.subCheckInterval : next.subCheckInterval
     settings = Object.assign({}, settings, {
       proxyMode: mode,
       proxyUrl: String(next.proxyUrl || ''),
       downloadDir: String(next.downloadDir || ''),
       concurrency,
-      maxSpeed
+      maxSpeed,
+      subAutoCheck: next.subAutoCheck == null ? !!settings.subAutoCheck : !!next.subAutoCheck,
+      subCheckInterval: Math.max(5, Math.min(1440, parseInt(intervalRaw, 10) || 60)),
+      subLatestOnly: next.subLatestOnly == null ? !!settings.subLatestOnly : !!next.subLatestOnly
     })
     store.write('settings.json', settings)
     await auth.applyProxy(settings)
+    scheduleSubAutoCheck()
     log(`设置已更新: proxyMode=${settings.proxyMode} proxyUrl=${settings.proxyUrl || '-'} concurrency=${settings.concurrency} maxSpeed=${settings.maxSpeed || '不限'}`)
     return settings
   })
@@ -818,13 +893,14 @@ function registerIpc() {
   ipcMain.handle('subs:check', async (_e, key) => {
     const sub = findSubscription(key)
     if (!sub) throw new Error('订阅不存在，可能已被删除')
-    const r = await listSubscriptionVideos(sub, sendSubProgress)
-    medialib.saveVideoList(sub.key, r.videos)
     const local = await subs.scanLocalMedia(effectiveDownloadDir())
+    const r = await listSubscriptionVideos(sub, sendSubProgress, local)
+    medialib.saveVideoList(sub.key, r.videos)
     const localMap = sub.site === 'hanime' ? local.hanime : local.bilibili
     const comparison = await buildSubComparison(sub, r.videos, localMap)
     sub.lastCheckAt = Date.now()
-    sub.lastCount = comparison.videos.length
+    // 仅拉取最新时只拿到最新一段，「共 N 个」保留上次的完整数量
+    if (!r.stopped) sub.lastCount = comparison.videos.length
     sub.lastMissing = comparison.missing
     if (!sub.name && r.author) sub.name = r.author
     saveSubscriptions()
@@ -1155,6 +1231,7 @@ app.whenReady().then(async () => {
       })
       .catch((err) => log(`自动同步失败: ${err.message}`))
   }, 15000)
+  scheduleSubAutoCheck()
 })
 
 // 无界面自检：只验证 cookie 导出与 yt-dlp 链路，不涉及登录

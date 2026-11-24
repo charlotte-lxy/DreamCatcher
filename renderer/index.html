@@ -297,6 +297,27 @@
           </div>
         </div>
 
+        <div class="panel hidden" data-panel="subs">
+          <div class="card">
+            <h3>订阅检测</h3>
+            <p class="muted">后台定时检查订阅有没有新视频，只刷新列表和「待下载」数量，不会自动下载。</p>
+            <div class="row">
+              <label class="check"><input id="subAutoCheck" type="checkbox" /> 自动检测</label>
+              <label class="field-label" for="subCheckInterval">间隔</label>
+              <input id="subCheckInterval" class="input short" type="number" min="5" max="1440" step="1" value="60" />
+              <span class="muted">分钟</span>
+            </div>
+            <div class="row">
+              <label class="check"><input id="subLatestOnly" type="checkbox" /> 仅拉取最新视频</label>
+            </div>
+            <div class="row">
+              <button id="saveSubsSettings" class="btn primary small">保存</button>
+            </div>
+            <div id="subsSettingsStatus" class="status"></div>
+            <p class="hint">视频多的 UP 建议开启「仅拉取最新」：从最新一条往回翻，碰到已下载或已上传的视频就停止，省时间也不容易被限流。</p>
+          </div>
+        </div>
+
         <div class="panel hidden" data-panel="network">
           <div class="card">
             <h3>网络</h3>

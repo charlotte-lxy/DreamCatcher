@@ -88,6 +88,7 @@ const SUBBARS = {
     items: [
       { id: 'download', label: '下载目录' },
       { id: 'account', label: '账号管理' },
+      { id: 'subs', label: '订阅检测' },
       { id: 'network', label: '网络' },
       { id: 'update', label: '更新' }
     ]
@@ -2021,6 +2022,9 @@ async function loadSettings() {
     $('downloadDir').value = settingsCache.downloadDir || ''
     $('maxConcurrent').value = settingsCache.concurrency || 2
     $('maxSpeed').value = settingsCache.maxSpeed ? settingsCache.maxSpeed : ''
+    $('subAutoCheck').checked = !!settingsCache.subAutoCheck
+    $('subCheckInterval').value = settingsCache.subCheckInterval || 60
+    $('subLatestOnly').checked = !!settingsCache.subLatestOnly
     syncProxyInput()
   } catch (_) { /* 读取失败沿用默认值 */ }
 }
@@ -2609,6 +2613,29 @@ $('saveProxy').addEventListener('click', async () => {
   }
 })
 
+$('saveSubsSettings').addEventListener('click', async () => {
+  const minutes = Number($('subCheckInterval').value || 60)
+  if (!Number.isInteger(minutes) || minutes < 5 || minutes > 1440) {
+    $('subsSettingsStatus').textContent = '检测间隔需为 5–1440 分钟的整数'
+    $('subsSettingsStatus').classList.remove('ok')
+    return
+  }
+  $('saveSubsSettings').disabled = true
+  try {
+    settingsCache = await window.api.setSettings(Object.assign({}, settingsCache, {
+      subAutoCheck: $('subAutoCheck').checked,
+      subCheckInterval: minutes,
+      subLatestOnly: $('subLatestOnly').checked
+    }))
+    $('subsSettingsStatus').textContent = '已保存'
+    $('subsSettingsStatus').classList.add('ok')
+  } catch (err) {
+    $('subsSettingsStatus').textContent = '保存失败：' + humanizeError(err.message)
+  } finally {
+    $('saveSubsSettings').disabled = false
+  }
+})
+
 $('testProxy').addEventListener('click', async () => {
   $('testProxy').disabled = true
   $('netStatus').textContent = '测试中…'
@@ -2675,6 +2702,18 @@ window.api.onSummaryProgress((p) => {
   $('summaryProgressText').textContent = total
     ? `正在检查 ${done}/${total}${p.current ? '：' + p.current : ''}`
     : '正在检查订阅…'
+})
+
+window.api.onSubsAuto((p) => {
+  const found = (p && p.found) || []
+  if (!found.length) return
+  loadSubscriptions()
+  for (const site of ['bilibili', 'hanime']) {
+    const mine = found.filter((f) => f.site === site)
+    if (!mine.length) continue
+    const names = mine.map((f) => f.name).slice(0, 3).join('、')
+    setSubNotice(site, `自动检测发现新视频：${names}${mine.length > 3 ? ` 等 ${mine.length} 个订阅` : ''}`, true)
+  }
 })
 
 window.api.onTagProgress((p) => {

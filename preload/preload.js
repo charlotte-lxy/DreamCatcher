@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld('api', {
   onUpProgress: (cb) => ipcRenderer.on('up:progress', (_e, p) => cb(p)),
   onSubProgress: (cb) => ipcRenderer.on('subs:progress', (_e, p) => cb(p)),
   onSummaryProgress: (cb) => ipcRenderer.on('subs:summary:progress', (_e, p) => cb(p)),
+  onSubsAuto: (cb) => ipcRenderer.on('subs:auto', (_e, p) => cb(p)),
   onTagProgress: (cb) => ipcRenderer.on('tags:progress', (_e, p) => cb(p)),
   onTagsUpdated: (cb) => ipcRenderer.on('tags:updated', (_e, p) => cb(p)),
   onUpdateChecked: (cb) => ipcRenderer.on('update:checked', (_e, st) => cb(st)),

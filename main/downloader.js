@@ -214,7 +214,8 @@ function buildDownloadArgs(o) {
     args.push(
       '-f', o.format || 'bv*+ba/b',
       '--merge-output-format', 'mp4',
-      '-o', path.join(o.outDir, '%(uploader)s', '%(uploader)s_%(upload_date>%Y-%m-%d)s_%(title)s [%(id)s].%(ext)s')
+      // UP 名和标题都可能超长，导致 Windows 建不了文件、上传网盘也被拒；只截断标题本身，[id] 留在末尾供去重识别
+      '-o', path.join(o.outDir, '%(uploader).40s', '%(uploader).40s_%(upload_date>%Y-%m-%d)s_%(title).60s [%(id)s].%(ext)s')
     )
   }
   args.push(...ffmpegArgs(), ...runtimeArgs())

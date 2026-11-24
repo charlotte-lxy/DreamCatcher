@@ -110,11 +110,13 @@ function isChargingVideo(v) {
 }
 
 // 按投稿时间倒序拉取某一种类型的全部视频；specialType 为空时是「全部类型」
-async function fetchVideoPages(session, headers, mid, mixin, specialType, onProgress) {
+// stopIds 非空时只拉最新的几条：从最新往回翻，碰到已知视频（已下载/已上传）就停
+async function fetchVideoPages(session, headers, mid, mixin, specialType, onProgress, stopIds) {
   const videos = []
   const seen = new Set()
   let total = 0
   let slist = []
+  let hit = false
   for (let page = 1; page <= MAX_PAGES; page++) {
     const j = await fetchJson(session, signedSearchUrl(mid, page, mixin, specialType), headers)
     if (!j || j.code !== 0) {
@@ -132,6 +134,10 @@ async function fetchVideoPages(session, headers, mid, mixin, specialType, onProg
     for (const v of list) {
       const id = String(v.bvid || '')
       if (!id || seen.has(id)) continue
+      if (stopIds && stopIds.has(id)) {
+        hit = true
+        break
+      }
       seen.add(id)
       videos.push({
         id,
@@ -145,17 +151,17 @@ async function fetchVideoPages(session, headers, mid, mixin, specialType, onProg
       })
     }
     if (onProgress) onProgress({ loaded: videos.length, total: total || videos.length, slist })
-    if (!list.length || (total > 0 && videos.length >= total)) break
+    if (hit || !list.length || (total > 0 && videos.length >= total)) break
     if (page < MAX_PAGES) await sleep(PAGE_DELAY)
   }
-  return { videos, total, slist }
+  return { videos, total, slist, stopped: hit }
 }
 
-async function listUpVideos(input, onProgress) {
+async function listUpVideos(input, onProgress, opts = {}) {
   const mid = parseMid(input)
   const session = auth.getSession()
   const headers = headersFor()
-
+  const stopIds = opts.stopIds && opts.stopIds.size ? opts.stopIds : null
   const nav = await fetchJson(session, 'https://api.bilibili.com/x/web-interface/nav', headers)
   if (!nav || nav.code !== 0 || !nav.data || !nav.data.wbi_img) {
     throw new Error(`获取 B 站签名失败（${(nav && nav.code) || '未知'}）`)
@@ -168,11 +174,11 @@ async function listUpVideos(input, onProgress) {
     const charge = (p.slist || []).find((it) => it && it.special_type === 'charging')
     if (charge) chargeTotal = Number(charge.count) || 0
     if (onProgress) onProgress({ mid, loaded: p.loaded, total: p.total + chargeTotal })
-  })
+  }, stopIds)
 
   const charging = await fetchVideoPages(session, headers, mid, mixin, 'charging', (p) => {
     if (onProgress) onProgress({ mid, loaded: normal.videos.length + p.loaded, total: normal.videos.length + p.total })
-  })
+  }, stopIds)
 
   // 同一视频可能两边都返回，充电列表里的数据覆盖它，确保充电标记正确
   const merged = new Map()
@@ -183,6 +189,7 @@ async function listUpVideos(input, onProgress) {
   return {
     mid,
     total: videos.length,
+    stopped: !!(normal.stopped || charging.stopped),
     author: (videos[0] && videos[0].author) || '',
     videos
   }

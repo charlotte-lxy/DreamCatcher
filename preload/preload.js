@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld('api', {
   removeUpload: (id) => ipcRenderer.invoke('upload:remove', id),
   runUpload: (id) => ipcRenderer.invoke('upload:run', id),
   clearUploadedLocal: (id) => ipcRenderer.invoke('upload:clearUploadedLocal', id),
+  subCloud: (key) => ipcRenderer.invoke('subs:cloud', key),
+  syncSub: (key) => ipcRenderer.invoke('subs:sync', key),
   onUploadProgress: (cb) => ipcRenderer.on('upload:progress', (_e, p) => cb(p)),
   onUploadDone: (cb) => ipcRenderer.on('upload:done', (_e, p) => cb(p)),
   onTask: (cb) => ipcRenderer.on('task:progress', (_e, ev) => cb(ev)),

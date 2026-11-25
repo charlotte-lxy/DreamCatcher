@@ -69,6 +69,65 @@ function updateTask(id, patch) {
   return l[i]
 }
 
+// 云同步设置挂在订阅上：一个订阅只保留一个任务，配置了就更新，没配置就新建
+function taskForSub(subKey) {
+  const key = String(subKey || '')
+  return list().find((t) => t.subKey === key) || null
+}
+
+function setCloud({ subKey, subName, dest, autoUpload, deleteLocal }) {
+  const key = String(subKey || '').trim()
+  if (!key) throw new Error('缺少订阅')
+  const dir = String(dest || '').trim()
+  if (!dir) throw new Error('缺少上传位置')
+  const l = list()
+  const i = l.findIndex((t) => t.subKey === key)
+  const rec = {
+    subName: String(subName || (i >= 0 ? l[i].subName : '') || ''),
+    dest: dir,
+    mode: autoUpload ? 'auto' : 'manual',
+    deleteLocal: !!deleteLocal,
+    enabled: true
+  }
+  if (i >= 0) l[i] = Object.assign({}, l[i], rec)
+  else l.unshift(normalize(Object.assign({ subKey: key }, rec)))
+  saveAll(l.slice(0, MAX_TASKS))
+  return taskForSub(key)
+}
+
+function clearCloud(subKey) {
+  const key = String(subKey || '')
+  const before = list()
+  const kept = before.filter((t) => t.subKey !== key)
+  if (kept.length === before.length) return 0
+  saveAll(kept)
+  return before.length - kept.length
+}
+
+// 老版本允许一个订阅挂多条上传任务，升级后只保留最近同步过的那条
+function migrateOnePerSub() {
+  const l = list()
+  const groups = new Map()
+  for (const t of l) {
+    if (!groups.has(t.subKey)) groups.set(t.subKey, [])
+    groups.get(t.subKey).push(t)
+  }
+  const score = (t) => Math.max(Number(t.lastRunAt) || 0, (t.last && Number(t.last.at)) || 0)
+  const keepIds = new Set()
+  const dropped = []
+  for (const items of groups.values()) {
+    if (items.length === 1) {
+      keepIds.add(items[0].id)
+      continue
+    }
+    const sorted = items.slice().sort((a, b) => score(b) - score(a) || (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))
+    keepIds.add(sorted[0].id)
+    for (const t of sorted.slice(1)) dropped.push({ subKey: t.subKey, subName: t.subName, dest: t.dest })
+  }
+  if (dropped.length) saveAll(l.filter((t) => keepIds.has(t.id)))
+  return dropped
+}
+
 // 已下载到本地的候选文件：索引里登记的优先，老文件用清单缓存里的 ID 扫目录兜底
 async function candidates(task, downloadDir) {
   const found = new Map()
@@ -301,5 +360,6 @@ function clearHistory() {
 }
 
 module.exports = {
-  list, save, remove, updateTask, candidates, runTask, autoAfterDownload, autoAll, uploadedNames, clearUploadedLocal, clearHistory
+  list, save, remove, updateTask, candidates, runTask, autoAfterDownload, autoAll, uploadedNames, clearUploadedLocal, clearHistory,
+  taskForSub, setCloud, clearCloud, migrateOnePerSub
 }

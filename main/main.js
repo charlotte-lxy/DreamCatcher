@@ -926,7 +926,8 @@ function registerIpc() {
     if (!sub) return subscriptions
     subscriptions = subscriptions.filter((s) => s.key !== sub.key)
     saveSubscriptions()
-    log(`取消订阅: ${sub.key}`)
+    const cleared = upload.clearCloud(sub.key)
+    log(`取消订阅: ${sub.key}${cleared ? `，一并移除云同步设置` : ''}`)
     return subscriptions
   })
 
@@ -952,9 +953,46 @@ function registerIpc() {
     if (sub.site === 'bilibili' && ['all', 'normal', 'charging'].includes(payload.filter)) {
       sub.filter = payload.filter
     }
+    // 云同步跟订阅走：选了网盘就落一条上传任务，选「不上传」就删掉
+    const cloud = payload && payload.cloud
+    if (cloud && typeof cloud === 'object') {
+      if (cloud.provider === 'ugreen') {
+        upload.setCloud({
+          subKey: sub.key,
+          subName: sub.name || sub.key,
+          dest: cloud.dest,
+          autoUpload: !!cloud.autoUpload,
+          deleteLocal: !!cloud.deleteLocal
+        })
+        log(`云同步设置: ${sub.key} → ${cloud.dest}${cloud.autoUpload ? '（自动上传）' : ''}${cloud.deleteLocal ? '（上传后删本地）' : ''}`)
+      } else {
+        upload.clearCloud(sub.key)
+        log(`云同步设置: ${sub.key} 改为不上传`)
+      }
+    }
     saveSubscriptions()
     log(`订阅设置: ${sub.key} filter=${sub.filter} ignored=${sub.ignored.length}`)
     return sub
+  })
+
+  ipcMain.handle('subs:cloud', (_e, key) => {
+    const sub = findSubscription(key)
+    return { task: (sub && upload.taskForSub(sub.key)) || null }
+  })
+
+  // 立即同步这一个订阅的云同步
+  ipcMain.handle('subs:sync', async (_e, key) => {
+    const sub = findSubscription(key)
+    if (!sub) throw new Error('订阅不存在，可能已被删除')
+    const task = upload.taskForSub(sub.key)
+    if (!task) throw new Error('这个订阅还没有云同步设置')
+    log(`同步上传任务 ${task.id}: ${task.subName || task.subKey} → ${task.dest}`)
+    const r = await upload.runTask(task.id, {
+      downloadDir: effectiveDownloadDir(),
+      onProgress: sendUploadProgress
+    })
+    log(`上传任务 ${task.id}: 上传 ${r.uploaded} 跳过 ${r.skipped}${r.failed ? ` 失败 ${r.failed}` : ''}${r.error ? ` ${r.error}` : ''}`)
+    return r
   })
 
   ipcMain.handle('subs:ignore', (_e, payload) => {
@@ -1242,6 +1280,11 @@ app.whenReady().then(async () => {
   if (process.argv.includes('--selftest')) return selftest()
   createWindow()
   updater.autoCheck(win, log)
+  // 老版本的「上传任务」并入订阅：同一订阅只留最近同步的那一条
+  const merged = upload.migrateOnePerSub()
+  if (merged.length) {
+    log(`上传任务已并入订阅：移除 ${merged.length} 条重复任务（${merged.map((t) => t.subName || t.subKey).join('，')}）`)
+  }
   // 启动后补跑一次自动同步，覆盖关机期间漏掉的文件
   setTimeout(() => {
     upload.autoAll({ downloadDir: effectiveDownloadDir(), onProgress: sendUploadProgress })

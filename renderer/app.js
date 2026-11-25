@@ -8,7 +8,7 @@ let taskGroup = 0
 let currentMeta = null
 let settingsCache = {}
 let currentModule = 'acquire'
-const currentSub = { acquire: 'single', subscribe: 'bili', upload: 'ugreen', library: 'all', settings: 'download' }
+const currentSub = { acquire: 'single', subscribe: 'add', library: 'all', settings: 'download' }
 
 /* ---------------- 通用 ---------------- */
 function fmtDuration(sec) {
@@ -64,9 +64,8 @@ const SUBBARS = {
   subscribe: {
     title: '订阅',
     items: [
-      { id: 'bili', label: 'B 站 UP' },
-      { id: 'hanime', label: 'Hanime' },
-      { id: 'summary', label: '更新汇总' }
+      { id: 'add', label: '添加订阅' },
+      { id: 'manage', label: '订阅管理' }
     ]
   },
   library: {
@@ -75,12 +74,6 @@ const SUBBARS = {
       { id: 'all', label: '全部' },
       { id: 'video', label: '视频' },
       { id: 'audio', label: '音频' }
-    ]
-  },
-  upload: {
-    title: '上传',
-    items: [
-      { id: 'ugreen', label: '绿联云' }
     ]
   },
   settings: {
@@ -142,8 +135,10 @@ function onSubChange() {
       panel.classList.toggle('hidden', panel.dataset.panel !== currentSub.subscribe)
     }
     updateSubCompareVisibility()
-    if (currentSub.subscribe === 'summary') loadSummary()
-    else loadSubscriptions()
+    if (currentSub.subscribe === 'manage') {
+      loadSubscriptions()
+      loadSummary()
+    }
   } else if (currentModule === 'settings') {
     for (const panel of document.querySelectorAll('#page-settings .panel')) {
       panel.classList.toggle('hidden', panel.dataset.panel !== currentSub.settings)
@@ -155,8 +150,6 @@ function onSubChange() {
     }
   } else if (currentModule === 'library') {
     loadFiles(currentSub.library)
-  } else if (currentModule === 'upload') {
-    loadUploadPage()
   }
 }
 
@@ -1081,10 +1074,6 @@ function siteOf(s) {
   return s && s.site === 'hanime' ? 'hanime' : 'bilibili'
 }
 
-function panelOf(s) {
-  return siteOf(s) === 'hanime' ? 'hanime' : 'bili'
-}
-
 function subTypeLabel(s) {
   if (siteOf(s) === 'bilibili') return 'B 站 UP'
   if (s.type === 'playlist') return 'Hanime 播放清单'
@@ -1098,18 +1087,17 @@ function subFilterLabel(s) {
   return '全部视频'
 }
 
-function statusElFor(site) {
-  return site === 'hanime' ? $('hnStatus') : $('subStatus')
+// 添加订阅与订阅管理各有一个状态栏，提示写到当前打开的那一页
+function statusElFor() {
+  return currentSub.subscribe === 'manage' ? $('manageStatus') : $('subStatus')
 }
 
-function progressEls(site) {
-  return site === 'hanime'
-    ? { box: $('hnProgress'), fill: $('hnProgressFill'), text: $('hnProgressText') }
-    : { box: $('subProgress'), fill: $('subProgressFill'), text: $('subProgressText') }
+function progressEls() {
+  return { box: $('subProgress'), fill: $('subProgressFill'), text: $('subProgressText') }
 }
 
 function setSubNotice(site, text, ok) {
-  const el = statusElFor(site)
+  const el = statusElFor()
   el.textContent = text || ''
   el.classList.toggle('ok', !!ok)
 }
@@ -1122,24 +1110,23 @@ function updateSubsCache(rec) {
 }
 
 function renderSubscriptions() {
-  renderSubList('subList', 'bilibili')
-  renderSubList('hnList', 'hanime')
-}
-
-function renderSubList(boxId, site) {
-  const box = $(boxId)
+  const box = $('subList')
   box.innerHTML = ''
-  const list = subsCache.filter((s) => siteOf(s) === site)
-  if (!list.length) {
+  $('subCount').textContent = subsCache.length ? `共 ${subsCache.length} 个订阅` : ''
+  if (!subsCache.length) {
     const empty = document.createElement('div')
     empty.className = 'empty'
-    empty.textContent = site === 'hanime'
-      ? '还没有订阅，先粘贴播放清单或上传者链接'
-      : '还没有订阅，先粘贴主页链接添加'
+    empty.textContent = '还没有订阅，先去「添加订阅」添加'
     box.appendChild(empty)
     return
   }
-  for (const s of list) box.appendChild(subRow(s))
+  const sorted = subsCache.slice().sort((a, b) => (Number(b.addedAt) || 0) - (Number(a.addedAt) || 0))
+  for (const s of sorted) box.appendChild(subRow(s))
+}
+
+// 订阅的云同步配置就存在上传任务里（一个订阅一个任务）
+function cloudTaskOf(s) {
+  return ugTasks.find((t) => t.subKey === s.key) || null
 }
 
 function subRow(s) {
@@ -1181,6 +1168,8 @@ function subRow(s) {
   parts.push(`共 ${Number(s.lastCount) || 0} 个`, `未下载 ${Number(s.lastMissing) || 0} 个`)
   if (s.ignored && s.ignored.length) parts.push(`忽略 ${s.ignored.length} 个`)
   parts.push(s.lastCheckAt ? `上次检查 ${fmtDate(s.lastCheckAt)}` : '尚未检查')
+  const task = cloudTaskOf(s)
+  parts.push(task ? `云同步 ${task.dest}${task.mode === 'auto' ? '（自动）' : ''}` : '不上传')
   meta.textContent = parts.join(' · ')
   main.append(name, meta)
 
@@ -1193,7 +1182,7 @@ function subRow(s) {
   check.addEventListener('click', () => checkSubscription(s))
   const settings = document.createElement('button')
   settings.className = 'btn ghost small sub-settings'
-  settings.textContent = '设置'
+  settings.textContent = '订阅设置'
   settings.disabled = subBusy
   settings.addEventListener('click', () => openSubSettings(s))
   const del = document.createElement('button')
@@ -1209,16 +1198,14 @@ function subRow(s) {
 
 function setSubBusy(busy) {
   subBusy = busy
-  for (const id of ['subAdd', 'hnAdd']) {
-    const btn = $(id)
-    btn.disabled = busy
-    btn.textContent = busy ? '获取中…' : '添加订阅'
-  }
-  for (const btn of document.querySelectorAll('#subList button, #hnList button')) btn.disabled = busy
+  const btn = $('subAdd')
+  btn.disabled = busy
+  btn.textContent = busy ? '获取中…' : '添加订阅'
+  for (const b of document.querySelectorAll('#subList button')) b.disabled = busy
 }
 
 function showSubProgress(site, show) {
-  const els = progressEls(site)
+  const els = progressEls()
   els.box.classList.toggle('hidden', !show)
   if (show) {
     els.fill.style.width = '0%'
@@ -1230,16 +1217,16 @@ function showSubProgress(site, show) {
 
 async function loadSubscriptions() {
   try {
-    subsCache = await window.api.listSubs()
+    const [list] = await Promise.all([window.api.listSubs(), loadUploadTasks()])
+    subsCache = list
     renderSubscriptions()
   } catch (err) {
-    setSubNotice(currentSub.subscribe === 'hanime' ? 'hanime' : 'bilibili', '读取订阅失败：' + humanizeError(err.message))
+    setSubNotice(null, '读取订阅失败：' + humanizeError(err.message))
   }
 }
 
 function updateSubCompareVisibility() {
-  const visible = !!subCompare && ['bili', 'hanime'].includes(currentSub.subscribe) &&
-    panelOf(subCompare.subscription) === currentSub.subscribe
+  const visible = !!subCompare && currentSub.subscribe === 'manage'
   $('subCompareWrap').classList.toggle('hidden', !visible)
 }
 
@@ -1324,79 +1311,62 @@ function setSubSelection(missingOnly) {
   updateSubSelection()
 }
 
+// 一个输入框同时接受 B 站空间链接和 Hanime 链接，按链接自动识别站点
 async function addSubscription() {
   if (subBusy) return
   const url = $('subUrl').value.trim()
-  if (!url) return setSubNotice('bilibili', '先粘贴 UP 主空间链接')
+  if (!url) return setSubNotice(null, '先粘贴 B 站 UP 主空间链接或 Hanime 链接')
+  const isHanime = /hanime\.tv/i.test(url)
+  const isBili = /bilibili\.com|b23\.tv/i.test(url)
+  if (!isHanime && !isBili) {
+    return setSubNotice(null, '只支持 B 站空间链接和 Hanime 链接')
+  }
   setSubBusy(true)
-  setSubNotice('bilibili', '正在获取网页清单并比对本地文件…')
-  showSubProgress('bilibili', true)
+  setSubNotice(null, isHanime ? '正在获取 Hanime 清单…' : '正在获取网页清单并比对本地文件…')
+  showSubProgress(null, true)
   try {
-    const res = await window.api.addSub(url)
+    const res = isHanime ? await window.api.addSubHanime(url) : await window.api.addSub(url)
     $('subUrl').value = ''
     updateSubsCache(res.subscription)
     renderSubscriptions()
     showSubCompare(res)
-    setSubNotice('bilibili', `订阅成功：共 ${res.videos.length} 个视频，已下载 ${res.downloaded} 个，待下载 ${res.missing} 个`, true)
+    setSubNotice(null, `订阅成功：共 ${res.videos.length} 个视频，已下载 ${res.downloaded} 个，待下载 ${res.missing} 个`, true)
     summaryLoaded = false
   } catch (err) {
-    setSubNotice('bilibili', '添加失败：' + humanizeError(err.message))
+    setSubNotice(null, '添加失败：' + humanizeError(err.message))
   } finally {
-    showSubProgress('bilibili', false)
-    setSubBusy(false)
-  }
-}
-
-async function addHanimeSubscription() {
-  if (subBusy) return
-  const url = $('hnUrl').value.trim()
-  if (!url) return setSubNotice('hanime', '先粘贴 Hanime 播放清单或上传者链接')
-  setSubBusy(true)
-  setSubNotice('hanime', '正在获取 Hanime 清单…')
-  showSubProgress('hanime', true)
-  try {
-    const res = await window.api.addSubHanime(url)
-    $('hnUrl').value = ''
-    updateSubsCache(res.subscription)
-    renderSubscriptions()
-    showSubCompare(res)
-    setSubNotice('hanime', `订阅成功：共 ${res.videos.length} 个视频，已下载 ${res.downloaded} 个，待下载 ${res.missing} 个`, true)
-    summaryLoaded = false
-  } catch (err) {
-    setSubNotice('hanime', '添加失败：' + humanizeError(err.message))
-  } finally {
-    showSubProgress('hanime', false)
+    showSubProgress(null, false)
     setSubBusy(false)
   }
 }
 
 async function checkSubscription(s) {
   if (subBusy) return
-  const site = siteOf(s)
   setSubBusy(true)
-  setSubNotice(site, `正在检查「${s.name}」…`)
-  showSubProgress(site, true)
+  setSubNotice(null, `正在检查「${s.name}」…`)
+  showSubProgress(null, true)
   try {
     const res = await window.api.checkSub(s.key)
     updateSubsCache(res.subscription)
     renderSubscriptions()
     showSubCompare(res)
     const upText = res.uploaded ? `，已上传 ${res.uploaded} 个` : ''
-    setSubNotice(site, `检查完成：已下载 ${res.downloaded} 个${upText}，待下载 ${res.missing} 个`, true)
+    setSubNotice(null, `检查完成：已下载 ${res.downloaded} 个${upText}，待下载 ${res.missing} 个`, true)
     summaryLoaded = false
   } catch (err) {
-    setSubNotice(site, '检查失败：' + humanizeError(err.message))
+    setSubNotice(null, '检查失败：' + humanizeError(err.message))
   } finally {
-    showSubProgress(site, false)
+    showSubProgress(null, false)
     setSubBusy(false)
   }
 }
 
 async function removeSubscription(s) {
   if (subBusy) return
-  if (!window.confirm(`取消订阅「${s.name || s.id}」？已下载的文件不会删除，该订阅的忽略清单会一并移除。`)) return
+  if (!window.confirm(`取消订阅「${s.name || s.id}」？已下载的文件不会删除，该订阅的忽略清单和云同步设置会一并移除。`)) return
   try {
     subsCache = await window.api.removeSub(s.key)
+    await loadUploadTasks()
     renderSubscriptions()
     if (subCompare && subCompare.subscription.key === s.key) {
       subCompare = null
@@ -1404,9 +1374,9 @@ async function removeSubscription(s) {
       $('subCompareWrap').classList.add('hidden')
     }
     summaryLoaded = false
-    setSubNotice(siteOf(s), '已取消订阅', true)
+    setSubNotice(null, '已取消订阅', true)
   } catch (err) {
-    setSubNotice(siteOf(s), '取消订阅失败：' + humanizeError(err.message))
+    setSubNotice(null, '取消订阅失败：' + humanizeError(err.message))
   }
 }
 
@@ -1527,6 +1497,18 @@ function openSubSettings(s) {
   for (const radio of document.querySelectorAll('input[name=subFilter]')) {
     radio.checked = radio.value === (s.filter || 'all')
   }
+  // 云同步：一个订阅最多一套，回填现有的那套
+  const task = cloudTaskOf(s)
+  $('subCloud').value = task ? 'ugreen' : ''
+  const share = !!task && (task.dest === '/volume1' || task.dest.startsWith('/volume1/'))
+  $('subCloudRoot').value = share ? 'share' : 'home'
+  $('subCloudDest').value = task ? task.dest : ''
+  $('subAutoUpload').checked = !!task && task.mode === 'auto'
+  $('subDeleteLocal').checked = !!task && !!task.deleteLocal
+  setCloudStatus('')
+  setCloudMsg('')
+  toggleCloudBody()
+  if (!ugConfig || !ugConfig.username) loadUgreenConfig()
   renderIgnoreList(s)
   $('subSettingsModal').classList.remove('hidden')
 }
@@ -1575,18 +1557,35 @@ async function saveSubSettings() {
   const target = subSettingsTarget
   const checked = document.querySelector('input[name=subFilter]:checked')
   const filter = checked ? checked.value : (target.filter || 'all')
+  const provider = $('subCloud').value
+  let cloud = { provider: '', dest: '', autoUpload: false, deleteLocal: false }
+  if (provider === 'ugreen') {
+    const dest = $('subCloudDest').value.trim()
+    if (!dest) return window.alert('先选择绿联云上传位置')
+    const root = cloudRootPath()
+    if (dest !== root && !dest.startsWith(root + '/')) {
+      return window.alert(`上传位置要选在 ${root} 下面`)
+    }
+    cloud = {
+      provider: 'ugreen',
+      dest,
+      autoUpload: $('subAutoUpload').checked,
+      deleteLocal: $('subDeleteLocal').checked
+    }
+  }
   const btn = $('subSettingsSave')
   btn.disabled = true
   try {
-    const updated = await window.api.saveSubSettings({ key: target.key, filter })
+    const updated = await window.api.saveSubSettings({ key: target.key, filter, cloud })
     updateSubsCache(updated)
+    await loadUploadTasks()
     renderSubscriptions()
     closeSubSettings()
     summaryLoaded = false
     if (siteOf(target) === 'bilibili' && subCompare && subCompare.subscription.key === target.key) {
       await checkSubscription(updated)
     }
-    setSubNotice(siteOf(updated), '订阅设置已保存', true)
+    setSubNotice(null, '订阅设置已保存', true)
   } catch (err) {
     window.alert('保存设置失败：' + humanizeError(err.message))
   } finally {
@@ -2033,16 +2032,7 @@ async function loadSettings() {
 let ugStatus = null
 let ugConfig = null
 let ugTasks = []
-let ugEditingId = ''
-let ugBusy = false
 let ugDirPath = '/home'
-
-function setUgStatus(text, ok) {
-  const el = $('ugStatus')
-  if (!el) return
-  el.textContent = text || ''
-  el.classList.toggle('ok', !!ok)
-}
 
 function setUgAcctStatus(text, ok) {
   const el = $('ugAcctStatus')
@@ -2057,12 +2047,12 @@ async function refreshUgreenStatus(force) {
     ugStatus = { ok: false, error: humanizeError(err.message) }
   }
   const ok = !!(ugStatus && ugStatus.ok)
-  $('ugGate').classList.toggle('hidden', ok)
-  $('ugBody').classList.toggle('hidden', !ok)
-  $('ugGateStatus').textContent = ok ? '' : ((ugStatus && ugStatus.error) || '还没有登录绿联云账号')
   $('ugAcctStatus').textContent = ok ? '已登录' : '未登录'
   $('ugAcctStatus').classList.toggle('ok', ok)
   $('ugLogout').classList.toggle('hidden', !ok)
+  if ($('subCloud').value === 'ugreen') {
+    setCloudStatus(ok ? '' : ((ugStatus && ugStatus.error) || '还没有登录绿联云账号'), ok)
+  }
   return ugStatus
 }
 
@@ -2099,7 +2089,6 @@ async function saveUgreenAccount() {
     const r = await refreshUgreenStatus(true)
     if (r.ok) {
       setUgAcctStatus('已登录', true)
-      if (currentModule === 'upload') loadUploadPage()
     } else {
       setUgAcctStatus('登录失败：' + (r.error || '未知错误'))
     }
@@ -2108,38 +2097,6 @@ async function saveUgreenAccount() {
   } finally {
     $('ugSave').disabled = false
   }
-}
-
-async function loadUploadPage() {
-  await refreshUgreenStatus(false)
-  if (!ugStatus || !ugStatus.ok) return
-  await loadUploadTasks()
-}
-
-async function loadUploadSubs() {
-  const sel = $('ugSub')
-  let list = []
-  try {
-    list = await window.api.listSubs()
-  } catch (_) {
-    list = []
-  }
-  const prev = sel.value
-  sel.innerHTML = ''
-  if (!list.length) {
-    const o = document.createElement('option')
-    o.value = ''
-    o.textContent = '还没有订阅，先去订阅页添加'
-    sel.appendChild(o)
-    return
-  }
-  for (const s of list) {
-    const o = document.createElement('option')
-    o.value = s.key
-    o.textContent = (s.name || s.key) + (s.site === 'hanime' ? '（Hanime）' : '')
-    sel.appendChild(o)
-  }
-  if (prev) sel.value = prev
 }
 
 function fmtAgo(ts) {
@@ -2151,155 +2108,47 @@ function fmtAgo(ts) {
   return Math.floor(d / 86400000) + ' 天前'
 }
 
+// 云同步设置挂在每个订阅的订阅设置里，一个订阅对应一个上传任务
 async function loadUploadTasks() {
   try {
     ugTasks = await window.api.listUploads()
   } catch (_) {
     ugTasks = []
   }
-  renderUploadTasks()
 }
 
-function renderUploadTasks() {
-  const box = $('ugTasks')
-  box.innerHTML = ''
-  $('ugSummary').textContent = ugTasks.length ? `${ugTasks.length} 个任务` : ''
-  if (!ugTasks.length) {
-    box.innerHTML = '<div class="empty">还没有上传任务</div>'
-    return
-  }
-  for (const t of ugTasks) {
-    const row = document.createElement('div')
-    row.className = 'file-row'
-
-    const type = document.createElement('div')
-    type.className = 'file-type'
-    type.textContent = t.mode === 'auto' ? '⇄' : '↑'
-
-    const main = document.createElement('div')
-    main.className = 'file-main'
-    const name = document.createElement('div')
-    name.className = 'file-name'
-    name.textContent = `${t.subName || t.subKey} → ${t.dest}`
-    const meta = document.createElement('div')
-    meta.className = 'file-meta'
-    const parts = [t.mode === 'auto' ? '自动同步' : '手动同步']
-    if (t.last) {
-      parts.push(`上次 ${fmtAgo(t.last.at)}：上传 ${t.last.uploaded} · 跳过 ${t.last.skipped}${t.last.failed ? ' · 失败 ' + t.last.failed : ''}`)
-      if (t.last.error) parts.push(t.last.error)
-    } else {
-      parts.push('还没同步过')
-    }
-    if (t.deleteLocal) parts.push('上传后删本地')
-    meta.textContent = parts.join(' · ')
-    main.append(name, meta)
-
-    const actions = document.createElement('div')
-    actions.className = 'file-actions'
-    const run = document.createElement('button')
-    run.className = 'btn ghost small'
-    run.textContent = '立即同步'
-    run.dataset.act = 'run'
-    run.dataset.id = t.id
-    const edit = document.createElement('button')
-    edit.className = 'btn ghost small'
-    edit.textContent = '编辑任务'
-    edit.dataset.act = 'edit'
-    edit.dataset.id = t.id
-    const del = document.createElement('button')
-    del.className = 'btn ghost small'
-    del.textContent = '删除'
-    del.dataset.act = 'remove'
-    del.dataset.id = t.id
-    actions.append(run, edit, del)
-
-    row.append(type, main, actions)
-    box.appendChild(row)
-  }
+function cloudRootMode() {
+  return $('subCloudRoot').value === 'share' ? 'share' : 'home'
 }
 
-function ugRootMode() {
-  return $('ugRoot').value === 'share' ? 'share' : 'home'
-}
-
-function ugRootPath() {
-  if (ugRootMode() === 'share') return '/volume1'
+function cloudRootPath() {
+  if (cloudRootMode() === 'share') return '/volume1'
   const user = (ugConfig && ugConfig.username) || ''
   return user ? `/home/${user}` : '/home'
 }
 
-// 编辑已有任务时把添加任务时的所有选项都回填，省得删了重建
-async function openUgTaskModal(task) {
-  ugEditingId = task ? task.id : ''
-  $('ugTaskTitle').textContent = task ? '编辑上传任务' : '添加上传任务'
-  $('ugEditTools').classList.toggle('hidden', !task)
-  $('ugClearStatus').textContent = ''
-  $('ugClearStatus').classList.remove('ok')
-  $('ugDest').value = task ? task.dest : ''
-  $('ugMode').value = task ? task.mode : 'manual'
-  $('ugDeleteLocal').checked = !!task && !!task.deleteLocal
-  const share = !!task && (task.dest === '/volume1' || task.dest.startsWith('/volume1/'))
-  $('ugRoot').value = share ? 'share' : 'home'
-  $('ugTaskModal').classList.remove('hidden')
-  setUgStatus('')
-  if (!ugConfig || !ugConfig.username) await loadUgreenConfig()
-  await loadUploadSubs()
-  if (task) {
-    $('ugSub').value = task.subKey
-    // 订阅可能已经被删掉，补一个选项不然选择框会跳回第一条
-    if ($('ugSub').value !== task.subKey) {
-      const opt = document.createElement('option')
-      opt.value = task.subKey
-      opt.textContent = (task.subName || task.subKey) + '（订阅已删除）'
-      $('ugSub').appendChild(opt)
-      $('ugSub').value = task.subKey
-    }
-  }
+function setCloudStatus(text, ok) {
+  const el = $('subCloudStatus')
+  el.textContent = text || ''
+  el.classList.toggle('ok', !!ok)
 }
 
-function closeUgTaskModal() {
-  $('ugTaskModal').classList.add('hidden')
-  ugEditingId = ''
+function setCloudMsg(text, ok) {
+  const el = $('subCloudMsg')
+  el.textContent = text || ''
+  el.classList.toggle('ok', !!ok)
 }
 
-async function createUploadTask() {
-  const subKey = $('ugSub').value
-  const dest = $('ugDest').value.trim()
-  if (!subKey) return setUgStatus('先选择一个订阅')
-  if (!dest) return setUgStatus('先选择绿联云上传位置')
-  const root = ugRootPath()
-  if (dest !== root && !dest.startsWith(root + '/')) {
-    return setUgStatus(`上传位置要选在 ${root} 下面`)
-  }
-  const sel = $('ugSub').selectedOptions[0]
-  const exist = ugTasks.find((t) => t.subKey === subKey && t.dest === dest)
-  const task = {
-    subKey,
-    subName: sel ? sel.textContent : subKey,
-    dest,
-    mode: $('ugMode').value,
-    deleteLocal: $('ugDeleteLocal').checked,
-    enabled: true
-  }
-  if (ugEditingId) {
-    if (exist && exist.id !== ugEditingId) return setUgStatus('已经有相同订阅和上传位置的任务')
-    task.id = ugEditingId
-  } else if (exist) task.id = exist.id
-  $('ugCreate').disabled = true
-  try {
-    ugTasks = await window.api.saveUpload(task)
-    renderUploadTasks()
-    closeUgTaskModal()
-  } catch (err) {
-    setUgStatus('保存失败：' + humanizeError(err.message))
-  } finally {
-    $('ugCreate').disabled = false
-  }
+// 选中网盘后才展开对应的上传选项
+function toggleCloudBody() {
+  const on = !!$('subCloud').value
+  $('subCloudBody').classList.toggle('hidden', !on)
+  if (on) refreshUgreenStatus(false)
 }
 
-function openUgDir() {
+function openCloudDir() {
   $('dirModal').classList.remove('hidden')
-  return loadUgDir(ugRootPath())
+  return loadUgDir(cloudRootPath())
 }
 
 function closeUgDir() {
@@ -2333,7 +2182,7 @@ async function loadUgDir(p) {
       box.appendChild(empty)
     }
     $('dirPath').textContent = ugDirPath + (r.files.length ? `（${r.files.length} 个文件）` : '')
-    $('dirUp').disabled = ugDirPath === ugRootPath()
+    $('dirUp').disabled = ugDirPath === cloudRootPath()
     $('dirPick').disabled = ugDirPath === '/volume1'
   } catch (err) {
     const box = $('dirList')
@@ -2355,49 +2204,56 @@ $('ugLogout').addEventListener('click', async () => {
   setUgAcctStatus('已退出登录')
 })
 
-$('ugGoAccount').addEventListener('click', () => {
-  currentSub.settings = 'account'
-  switchModule('settings')
+$('subCloud').addEventListener('change', toggleCloudBody)
+$('subCloudRoot').addEventListener('change', () => {
+  $('subCloudDest').value = ''
+  setCloudMsg('')
 })
+$('subCloudBrowse').addEventListener('click', openCloudDir)
+$('subCloudSync').addEventListener('click', syncSubCloud)
+$('subCloudClear').addEventListener('click', clearSubCloudLocal)
 
-$('ugAdd').addEventListener('click', () => openUgTaskModal())
-$('ugCreate').addEventListener('click', createUploadTask)
-$('ugCancel').addEventListener('click', closeUgTaskModal)
-$('ugClearLocal').addEventListener('click', async () => {
-  const task = ugTasks.find((t) => t.id === ugEditingId)
-  if (!task) return
+async function syncSubCloud() {
+  const task = subSettingsTarget ? cloudTaskOf(subSettingsTarget) : null
+  if (!task) return setCloudMsg('这个订阅还没保存云同步设置')
+  $('subCloudSync').disabled = true
+  setCloudMsg('正在同步…')
+  try {
+    const r = await window.api.syncSub(task.subKey)
+    const parts = [`上传 ${r.uploaded} 个`, `跳过 ${r.skipped} 个`]
+    if (r.failed) parts.push(`失败 ${r.failed} 个`)
+    if (r.error) parts.push(r.error)
+    setCloudMsg(parts.join('，'), !r.failed)
+    await loadUploadTasks()
+    renderSubscriptions()
+  } catch (err) {
+    setCloudMsg('同步失败：' + humanizeError(err.message))
+  } finally {
+    $('subCloudSync').disabled = false
+  }
+}
+
+async function clearSubCloudLocal() {
+  const task = subSettingsTarget ? cloudTaskOf(subSettingsTarget) : null
+  if (!task) return setCloudMsg('这个订阅还没保存云同步设置')
   const tip = `删除「${task.subName || task.subKey}」已经传到绿联云的本地文件？\n只删云端有同名同大小的，没上传过的会保留，删除后无法恢复。`
   if (!window.confirm(tip)) return
-  $('ugClearLocal').disabled = true
-  $('ugClearStatus').textContent = '正在比对云端文件…'
-  $('ugClearStatus').classList.remove('ok')
+  $('subCloudClear').disabled = true
+  setCloudMsg('正在比对云端文件…')
   try {
     const r = await window.api.clearUploadedLocal(task.id)
     const parts = [`已删除 ${r.deleted} 个（${fmtSize(r.bytes)}）`]
     if (r.kept) parts.push(`未上传的 ${r.kept} 个保留`)
     if (r.failed) parts.push(`${r.failed} 个删除失败${r.error ? '：' + humanizeError(r.error) : ''}`)
-    $('ugClearStatus').textContent = parts.join('，')
-    $('ugClearStatus').classList.toggle('ok', !r.failed)
-    loadUploadTasks()
+    setCloudMsg(parts.join('，'), !r.failed)
+    await loadUploadTasks()
+    renderSubscriptions()
   } catch (err) {
-    $('ugClearStatus').textContent = '清除失败：' + humanizeError(err.message)
+    setCloudMsg('清除失败：' + humanizeError(err.message))
   } finally {
-    $('ugClearLocal').disabled = false
+    $('subCloudClear').disabled = false
   }
-})
-$('ugTaskClose').addEventListener('click', closeUgTaskModal)
-$('ugTaskModal').addEventListener('click', (e) => {
-  if (e.target === $('ugTaskModal')) closeUgTaskModal()
-})
-$('ugRoot').addEventListener('change', () => {
-  $('ugDest').value = ''
-  setUgStatus('')
-})
-$('ugBrowse').addEventListener('click', openUgDir)
-$('ugRefresh').addEventListener('click', () => {
-  refreshUgreenStatus(false)
-  loadUploadTasks()
-})
+}
 
 $('dirClose').addEventListener('click', closeUgDir)
 $('dirCancel').addEventListener('click', closeUgDir)
@@ -2405,57 +2261,18 @@ $('dirModal').addEventListener('click', (e) => {
   if (e.target === $('dirModal')) closeUgDir()
 })
 $('dirUp').addEventListener('click', () => {
-  if (ugDirPath === ugRootPath()) return
+  if (ugDirPath === cloudRootPath()) return
   loadUgDir(ugDirPath.split('/').slice(0, -1).join('/') || '/')
 })
 $('dirPick').addEventListener('click', () => {
-  if (ugDirPath === '/volume1') return setUgStatus('请先进入一个共享文件夹')
-  $('ugDest').value = ugDirPath
+  if (ugDirPath === '/volume1') return setCloudMsg('请先进入一个共享文件夹')
+  $('subCloudDest').value = ugDirPath
   closeUgDir()
-  setUgStatus('')
+  setCloudMsg('')
 })
 $('dirList').addEventListener('click', (e) => {
   const row = e.target.closest('.dir-row')
   if (row) loadUgDir(row.dataset.path)
-})
-
-$('ugTasks').addEventListener('click', async (e) => {
-  const btn = e.target.closest('button[data-act]')
-  if (!btn || ugBusy) return
-  const id = btn.dataset.id
-  const task = ugTasks.find((t) => t.id === id)
-  if (!task) return
-  if (btn.dataset.act === 'remove') {
-    if (!confirm('删除这条上传任务？已经上传到绿联云的文件不会被删除。')) return
-    try {
-      ugTasks = await window.api.removeUpload(id)
-      renderUploadTasks()
-      setUgStatus('已删除上传任务', true)
-    } catch (err) {
-      setUgStatus('删除失败：' + humanizeError(err.message))
-    }
-    return
-  }
-  if (btn.dataset.act === 'edit') {
-    openUgTaskModal(task)
-    return
-  }
-  ugBusy = true
-  btn.disabled = true
-  setUgStatus('正在同步…')
-  try {
-    const r = await window.api.runUpload(id)
-    const parts = [`上传 ${r.uploaded} 个`, `跳过 ${r.skipped} 个`]
-    if (r.failed) parts.push(`失败 ${r.failed} 个`)
-    if (r.error) parts.push(r.error)
-    setUgStatus(parts.join('，'), !r.failed)
-  } catch (err) {
-    setUgStatus('同步失败：' + humanizeError(err.message))
-  } finally {
-    ugBusy = false
-    btn.disabled = false
-    loadUploadTasks()
-  }
 })
 
 /* ---------------- 事件绑定 ---------------- */
@@ -2493,10 +2310,6 @@ $('upDownload').addEventListener('click', startBatchDownload)
 $('subAdd').addEventListener('click', addSubscription)
 $('subUrl').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') addSubscription()
-})
-$('hnAdd').addEventListener('click', addHanimeSubscription)
-$('hnUrl').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') addHanimeSubscription()
 })
 $('subSelectMissing').addEventListener('click', () => setSubSelection(true))
 $('subSelectNone').addEventListener('click', () => setSubSelection(false))
@@ -2551,7 +2364,6 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return
   if (!$('subSettingsModal').classList.contains('hidden')) closeSubSettings()
   else if (!$('dirModal').classList.contains('hidden')) closeUgDir()
-  else if (!$('ugTaskModal').classList.contains('hidden')) closeUgTaskModal()
   else if (!$('filterModal').classList.contains('hidden')) closeFilterModal()
   else if (!$('taskModal').classList.contains('hidden')) closeTaskModal()
 })
@@ -2837,18 +2649,15 @@ window.api.onUploadProgress((p) => {
   const ref = ensureUploadEntry(p)
   const pct = p.total ? Math.min(100, (p.done / p.total) * 100) : 0
   if (p.phase === 'error') {
-    setUgStatus(`上传 ${p.file} 失败：${p.error}`)
     markUploadEntryFailed(ref, p.error)
     renderUploadSpeed()
     return
   }
   if (p.phase === 'done') {
-    setUgStatus(`已上传 ${p.index}/${p.count}：${p.file}`, true)
     markUploadEntryDone(ref, p.dest)
     renderUploadSpeed()
     return
   }
-  setUgStatus(`正在上传 ${p.index}/${p.count}：${p.file} ${pct.toFixed(0)}%`, true)
   if (p.phase === 'start') {
     ref.info.textContent = `准备上传 · 第 ${p.index}/${p.count} 个`
     updateTaskBadge()

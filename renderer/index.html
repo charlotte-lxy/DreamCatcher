@@ -33,7 +33,6 @@
       <button class="rail-btn active" data-module="acquire"><span class="ico">⇩</span><span>资源获取</span></button>
       <button class="rail-btn" data-module="subscribe"><span class="ico">★</span><span>订阅</span></button>
       <button class="rail-btn" data-module="library"><span class="ico">▦</span><span>资源管理</span></button>
-      <button class="rail-btn" data-module="upload"><span class="ico">↑</span><span>上传</span></button>
     </nav>
     <div class="rail-bottom">
       <button class="rail-btn" data-module="settings"><span class="ico">⚙</span><span>设置</span></button>
@@ -111,11 +110,11 @@
       <section class="page" id="page-subscribe">
         <h1 class="page-title">订阅</h1>
 
-        <div class="panel" data-panel="bili">
+        <div class="panel" data-panel="add">
           <div class="card">
             <div class="row">
               <input id="subUrl" class="input" type="text" spellcheck="false"
-                     placeholder="粘贴 B 站 UP 主空间链接，例如 https://space.bilibili.com/12345678" />
+                     placeholder="粘贴 B 站 UP 主空间链接，或 Hanime 播放清单 / 上传者 / 搜索链接" />
               <button id="subAdd" class="btn primary">添加订阅</button>
             </div>
             <div id="subStatus" class="status"></div>
@@ -123,37 +122,35 @@
               <div class="bar"><i id="subProgressFill"></i></div>
               <span id="subProgressText">已获取 0 个视频</span>
             </div>
-            <p class="hint">添加后会拉取该 UP 的全部视频，并与下载目录比对；文件名里带 BV 号的视为已下载，已下载的默认不勾选。</p>
-          </div>
-
-          <div class="card">
-            <h3>已订阅 UP</h3>
-            <div id="subList" class="subs"><div class="empty">还没有订阅，先粘贴主页链接添加</div></div>
+            <p class="hint">自动识别站点：B 站空间链接会拉取该 UP 的全部视频，Hanime 支持 playlist / user / search 三种链接；文件名里带 BV 号或 Hanime 数字 ID 的视为已下载，已下载的默认不勾选。</p>
           </div>
         </div>
 
-        <div class="panel hidden" data-panel="hanime">
+        <div class="panel hidden" data-panel="manage">
           <div class="card">
             <div class="row">
-              <input id="hnUrl" class="input" type="text" spellcheck="false"
-                     placeholder="粘贴 Hanime 播放清单/上传者/搜索链接，例如 .../playlist?list=...、.../user/... 或 .../search?query=..." />
-              <button id="hnAdd" class="btn primary">添加订阅</button>
+              <h3>订阅管理</h3>
+              <span id="manageStatus" class="status"></span>
+              <span class="spacer"></span>
+              <span id="subCount" class="muted"></span>
             </div>
-            <div id="hnStatus" class="status"></div>
-            <div id="hnProgress" class="up-progress hidden">
-              <div class="bar"><i id="hnProgressFill"></i></div>
-              <span id="hnProgressText">已获取 0 个视频</span>
-            </div>
-            <p class="hint">支持播放清单（playlist?list=...）、上传者（user/...）和搜索结果（search?query=...）三种订阅；文件名里带 Hanime 数字 ID 的视为已下载。</p>
+            <div id="subList" class="subs"><div class="empty">还没有订阅，先去「添加订阅」添加</div></div>
           </div>
 
-          <div class="card">
-            <h3>已订阅 Hanime</h3>
-            <div id="hnList" class="subs"><div class="empty">还没有订阅，先粘贴播放清单或上传者链接</div></div>
+          <div id="subCompareWrap" class="card hidden">
+            <div class="up-toolbar">
+              <span id="subCompareTitle" class="sub-compare-title">比对清单</span>
+              <span id="subCompareSummary" class="muted"></span>
+              <span class="spacer"></span>
+              <span id="subSelected" class="up-selected">已选 0</span>
+              <button id="subSelectMissing" class="btn ghost small">全选待下载</button>
+              <button id="subSelectNone" class="btn ghost small">取消选择</button>
+              <button id="subIgnore" class="btn ghost small" disabled>批量忽略</button>
+              <button id="subDownload" class="btn primary small" disabled>批量下载</button>
+            </div>
+            <div id="subItems" class="up-list"></div>
           </div>
-        </div>
 
-        <div class="panel hidden" data-panel="summary">
           <div class="card">
             <div class="row">
               <h3>更新汇总</h3>
@@ -165,50 +162,9 @@
               <div class="bar"><i id="summaryProgressFill"></i></div>
               <span id="summaryProgressText">正在检查订阅…</span>
             </div>
-            <p class="hint">按作者分组，列出本地最新视频之后的更新；B 站按订阅设置的视频类型过滤，忽略清单不显示。</p>
+            <p class="hint">按作者分组列出还没下载、也没上传的更新；B 站按订阅设置里的更新范围过滤，忽略清单不显示。</p>
           </div>
           <div id="summaryGroups"></div>
-        </div>
-
-        <div id="subCompareWrap" class="card hidden">
-          <div class="up-toolbar">
-            <span id="subCompareTitle" class="sub-compare-title">比对清单</span>
-            <span id="subCompareSummary" class="muted"></span>
-            <span class="spacer"></span>
-            <span id="subSelected" class="up-selected">已选 0</span>
-            <button id="subSelectMissing" class="btn ghost small">全选待下载</button>
-            <button id="subSelectNone" class="btn ghost small">取消选择</button>
-            <button id="subIgnore" class="btn ghost small" disabled>批量忽略</button>
-            <button id="subDownload" class="btn primary small" disabled>批量下载</button>
-          </div>
-          <div id="subItems" class="up-list"></div>
-        </div>
-      </section>
-
-      <!-- 上传 -->
-      <section class="page" id="page-upload">
-        <h1 class="page-title">上传 <span id="ugSummary" class="title-sub"></span></h1>
-
-        <div class="card" id="ugGate">
-          <h3>绿联云</h3>
-          <p class="muted">把已下载的视频上传到绿联云，需要先登录账号。</p>
-          <div id="ugGateStatus" class="status"></div>
-          <div class="row">
-            <span class="spacer"></span>
-            <button id="ugGoAccount" class="btn primary">去设置中登录</button>
-          </div>
-        </div>
-
-        <div id="ugBody" class="hidden">
-          <div class="card">
-            <div class="row">
-              <h3>上传任务</h3>
-              <span class="spacer"></span>
-              <button id="ugAdd" class="btn primary small">添加上传任务</button>
-              <button id="ugRefresh" class="btn ghost small">刷新</button>
-            </div>
-            <div id="ugTasks" class="files"><div class="empty">还没有上传任务</div></div>
-          </div>
         </div>
       </section>
 
@@ -501,6 +457,34 @@
             <label><input type="radio" name="subFilter" value="charging" /> 仅充电视频</label>
           </div>
         </div>
+        <div class="sub-cloud">
+          <div class="row">
+            <span class="field-label">云同步</span>
+            <select id="subCloud" class="select">
+              <option value="">不上传</option>
+              <option value="ugreen">绿联云</option>
+            </select>
+            <span id="subCloudStatus" class="status"></span>
+          </div>
+          <div id="subCloudBody" class="hidden">
+            <div class="row">
+              <span class="field-label">上传位置</span>
+              <select id="subCloudRoot" class="select">
+                <option value="home">个人文件夹</option>
+                <option value="share">共享文件夹</option>
+              </select>
+              <input id="subCloudDest" class="input" readonly placeholder="点击「浏览」选择目录" />
+              <button id="subCloudBrowse" class="btn ghost" type="button">浏览</button>
+            </div>
+            <label class="check"><input id="subAutoUpload" type="checkbox" /> 下载完成后自动上传</label>
+            <label class="check"><input id="subDeleteLocal" type="checkbox" /> 上传成功后删除本地文件</label>
+            <div class="row">
+              <button id="subCloudSync" class="btn ghost small" type="button">立即同步</button>
+              <button id="subCloudClear" class="btn ghost small" type="button">删除本地已上传文件</button>
+            </div>
+            <div id="subCloudMsg" class="status"></div>
+          </div>
+        </div>
         <div class="sub-ignore-head">
           <span>忽略清单</span>
           <span id="subIgnoreCount" class="muted"></span>
@@ -515,48 +499,6 @@
         <span class="spacer"></span>
         <button id="subSettingsCancel" class="btn ghost small" type="button">取消</button>
         <button id="subSettingsSave" class="btn primary small" type="button">保存</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="ugTaskModal" class="modal-mask hidden" role="dialog" aria-modal="true" aria-labelledby="ugTaskTitle">
-    <div class="modal">
-      <div class="modal-head">
-        <h2 id="ugTaskTitle">添加上传任务</h2>
-        <button id="ugTaskClose" class="modal-close" type="button" aria-label="关闭">×</button>
-      </div>
-      <div class="modal-body">
-        <div class="row">
-          <span class="field-label">订阅</span>
-          <select id="ugSub" class="select"></select>
-        </div>
-        <div class="row">
-          <span class="field-label">同步方式</span>
-          <select id="ugMode" class="select">
-            <option value="manual">手动同步</option>
-            <option value="auto">自动同步</option>
-          </select>
-        </div>
-        <div class="row">
-          <span class="field-label">上传位置</span>
-          <select id="ugRoot" class="select">
-            <option value="home">个人文件夹</option>
-            <option value="share">共享文件夹</option>
-          </select>
-          <input id="ugDest" class="input" readonly placeholder="点击「浏览」选择目录" />
-          <button id="ugBrowse" class="btn ghost" type="button">浏览</button>
-        </div>
-        <label class="check"><input id="ugDeleteLocal" type="checkbox" /> 上传成功后删除本地文件</label>
-        <div id="ugEditTools" class="row hidden">
-          <button id="ugClearLocal" class="btn ghost small" type="button">删除本地已上传文件</button>
-          <span id="ugClearStatus" class="status"></span>
-        </div>
-        <div id="ugStatus" class="status"></div>
-      </div>
-      <div class="modal-foot">
-        <span class="spacer"></span>
-        <button id="ugCancel" class="btn ghost small" type="button">取消</button>
-        <button id="ugCreate" class="btn primary small" type="button">确定</button>
       </div>
     </div>
   </div>

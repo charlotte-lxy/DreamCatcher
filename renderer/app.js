@@ -1316,7 +1316,8 @@ async function addSubscription() {
   if (subBusy) return
   const url = $('subUrl').value.trim()
   if (!url) return setSubNotice(null, '先粘贴 B 站 UP 主空间链接或 Hanime 链接')
-  const isHanime = /hanime\.tv/i.test(url)
+  // hanime 站点域名是 hanime1.me（main/hanime.js 也只认这个域名）
+  const isHanime = /hanime1\.me/i.test(url)
   const isBili = /bilibili\.com|b23\.tv/i.test(url)
   if (!isHanime && !isBili) {
     return setSubNotice(null, '只支持 B 站空间链接和 Hanime 链接')

@@ -1,6 +1,6 @@
 {
   "name": "dreamcatcher",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
   "description": "Desktop video downloader with in-app login",
   "author": "Dreamcatcher",

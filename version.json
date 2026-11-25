@@ -1,10 +1,17 @@
 {
-  "version": "0.8.0",
+  "version": "0.8.1",
   "date": "2026-11-25",
-  "asar": "release/app-0.8.0.asar",
-  "sha256": "138047258718be42ad78f65949702dd3660eed5a382ee34916926c09b6f4a265",
-  "size": 292420,
+  "asar": "release/app-0.8.1.asar",
+  "sha256": "1a9714e81e5929adcde6b54f39d2e169802d9eb3c47e61774a2709bc597c0b14",
+  "size": 292502,
   "releases": [
+    {
+      "version": "0.8.1",
+      "date": "2026-11-25",
+      "items": [
+        "修复 Hanime 链接订阅不了的问题：站点域名判断写成了 hanime.tv，实际是 hanime1.me，现在 hanime1.me 的搜索、播放清单、上传者链接都能识别"
+      ]
+    },
     {
       "version": "0.8.0",
       "date": "2026-11-25",

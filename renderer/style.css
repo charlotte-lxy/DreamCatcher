@@ -369,6 +369,28 @@ body {
 .modal-body .check { margin-top: 14px; }
 .modal-body .status { margin-top: 10px; }
 
+/* ---------- 订阅设置弹窗排版 ---------- */
+/* 标签列等宽，整块按「名称 → 更新范围 → 云同步 → 忽略清单」分节 */
+.sub-settings-modal .field-label,
+.sub-settings-modal .filter-label { width: 68px; flex: none; }
+.sub-settings-modal .row { margin-top: 0; }
+.sub-settings-modal .row + .row { margin-top: 10px; }
+.sub-settings-modal .input { min-width: 0; }
+.sub-settings-modal .filter-row { margin: 12px 0 0; gap: 10px; }
+.sub-settings-modal .filter-label { padding-top: 7px; }
+.sub-settings-modal .sub-cloud {
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid #23262e;
+}
+.sub-settings-modal #subCloudBody { margin-top: 10px; }
+.sub-settings-modal .sub-checks { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 12px; }
+.sub-settings-modal .sub-checks .check { margin-top: 0; }
+.sub-settings-modal #subCloudMsg:empty { display: none; }
+.sub-settings-modal .sub-ignore-head {
+  margin: 16px 0 10px; padding-top: 14px; border-top: 1px solid #23262e;
+}
+.btn.danger { color: #ff7b7b; border-color: #4a2a2f; }
+.btn.danger:hover:not(:disabled) { background: #2a1a1d; }
+
 /* ---------- 任务列表左侧模块栏 ---------- */
 /* 高度固定，不随内容多少缩放 */
 .task-modal {

@@ -199,14 +199,10 @@
               <span class="muted">分钟</span>
             </div>
             <div class="row">
-              <label class="check"><input id="subAutoDownload" type="checkbox" /> 检测到新视频自动下载</label>
-              <label class="check"><input id="subLatestOnly" type="checkbox" /> 仅拉取最新视频</label>
-            </div>
-            <div class="row">
               <button id="saveSubsSettings" class="btn primary small">保存</button>
             </div>
             <div id="subsSettingsStatus" class="status"></div>
-            <p class="hint">视频多的 UP 建议开启「仅拉取最新」：从最新一条往回翻，碰到已下载或已上传的视频就停止，省时间也不容易被限流。</p>
+            <p class="hint">「仅拉取最新视频」「检测到新视频自动下载」已挪到每个订阅的「订阅设置」里，按订阅单独设置。</p>
           </div>
         </div>
 
@@ -439,6 +435,10 @@
         <button id="subSettingsClose" class="modal-close" type="button" aria-label="关闭">×</button>
       </div>
       <div class="modal-body">
+        <div class="row">
+          <span class="field-label">订阅名称</span>
+          <input id="subName" class="input" maxlength="60" placeholder="显示名称，同时用作新建文件夹的名字" />
+        </div>
         <div id="subFilterRow" class="filter-row">
           <span class="filter-label">更新范围</span>
           <div class="filter-choices">
@@ -446,6 +446,10 @@
             <label><input type="radio" name="subFilter" value="normal" /> 仅普通视频</label>
             <label><input type="radio" name="subFilter" value="charging" /> 仅充电视频</label>
           </div>
+        </div>
+        <div class="sub-checks">
+          <label id="subLatestOnlyWrap" class="check"><input id="subLatestOnly" type="checkbox" /> 仅拉取最新视频（碰到已下载/已上传就停）</label>
+          <label class="check"><input id="subAutoDownload" type="checkbox" /> 检测到新视频自动下载</label>
         </div>
         <div class="sub-cloud">
           <div class="row">
@@ -466,8 +470,10 @@
               <input id="subCloudDest" class="input" readonly placeholder="点击「浏览」选择目录" />
               <button id="subCloudBrowse" class="btn ghost" type="button">浏览</button>
             </div>
-            <label class="check"><input id="subAutoUpload" type="checkbox" /> 下载完成后自动上传</label>
-            <label class="check"><input id="subDeleteLocal" type="checkbox" /> 上传成功后删除本地文件</label>
+            <div class="sub-checks">
+              <label class="check"><input id="subAutoUpload" type="checkbox" /> 下载完成后自动上传</label>
+              <label class="check"><input id="subDeleteLocal" type="checkbox" /> 上传成功后删除本地文件</label>
+            </div>
             <div class="row">
               <button id="subCloudSync" class="btn ghost small" type="button">立即同步</button>
               <button id="subCloudClear" class="btn ghost small" type="button">删除本地已上传文件</button>
@@ -485,8 +491,9 @@
         <div id="subIgnoreList" class="sub-ignore-list"><div class="empty">没有忽略的视频</div></div>
       </div>
       <div class="modal-foot">
-        <span class="muted">忽略的视频不会出现在对比清单和更新汇总中</span>
+        <button id="subSettingsRemove" class="btn ghost small danger" type="button">取消订阅</button>
         <span class="spacer"></span>
+        <span class="muted">忽略的视频不会出现在更新列表里</span>
         <button id="subSettingsCancel" class="btn ghost small" type="button">取消</button>
         <button id="subSettingsSave" class="btn primary small" type="button">保存</button>
       </div>
@@ -503,6 +510,8 @@
       <div class="modal-body">
         <div class="row">
           <button id="dirUp" class="btn ghost small" type="button">上一级</button>
+          <button id="dirNew" class="btn ghost small" type="button">新建文件夹</button>
+          <span id="dirMsg" class="status"></span>
         </div>
         <div id="dirList" class="dir-list"><div class="empty">加载中…</div></div>
       </div>

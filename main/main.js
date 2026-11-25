@@ -143,6 +143,9 @@ function normalizeSubscription(raw) {
     face: String(raw.face || ''),
     // 待下载清单跟着订阅一起存，展开订阅时不用再联网
     updates: (Array.isArray(raw.updates) ? raw.updates : []).filter((v) => v && v.id),
+    // 检测行为按订阅单独设置：只拉最新一段 / 发现新视频自动下载
+    latestOnly: !!raw.latestOnly,
+    autoDownload: !!raw.autoDownload,
     lastCheckAt: Number(raw.lastCheckAt) || 0,
     lastCount: Number(raw.lastCount) || 0,
     lastMissing: Number(raw.lastMissing) || 0
@@ -230,7 +233,7 @@ async function listSubscriptionVideos(sub, onProgress, local, knownIds) {
     const proxyUrl = await proxyFor(sub.url)
     return hanime.listSubscription(sub.url, { proxy: proxyUrl, onProgress })
   }
-  const known = settings.subLatestOnly && local ? (knownIds || await knownVideoIds(sub, local)) : null
+  const known = sub.latestOnly && local ? (knownIds || await knownVideoIds(sub, local)) : null
   return bili.listUpVideos(sub.url || `https://space.bilibili.com/${sub.mid}`, (p) => {
     if (onProgress) onProgress(Object.assign({ site: 'bilibili' }, p))
   }, known && known.size ? { stopIds: known } : {})
@@ -298,9 +301,9 @@ async function autoCheckSubscriptions() {
         // 第一次检测只当基线，不然会把全部历史视频都报成「新增」
         const fresh = prevIds ? r.videos.filter((v) => !prevIds.has(String(v.id))) : []
         if (fresh.length) {
-          const entry = { key: sub.key, site: sub.site, name: sub.name, fresh: fresh.length, missing: comparison.missing }
+          const entry = { key: sub.key, site: sub.site, name: sub.name, fresh: fresh.length, missing: comparison.missing, autoDownload: !!sub.autoDownload }
           // 自动下载交给渲染层发起，任务列表和下载队列都复用现有那一套
-          if (settings.subAutoDownload) {
+          if (sub.autoDownload) {
             const freshIds = new Set(fresh.map((v) => String(v.id)))
             entry.videos = comparison.videos
               .filter((v) => !v.downloaded && !v.uploaded && freshIds.has(String(v.id)))
@@ -319,7 +322,7 @@ async function autoCheckSubscriptions() {
   }
   if (!found.length) return
   log(`自动检测完成: ${found.map((f) => `${f.name} 新增 ${f.fresh}`).join('，')}`)
-  if (win && !win.isDestroyed()) win.webContents.send('subs:auto', { checkedAt: Date.now(), found, autoDownload: !!settings.subAutoDownload })
+  if (win && !win.isDestroyed()) win.webContents.send('subs:auto', { checkedAt: Date.now(), found })
 }
 
 // 开关或间隔改动后重排定时器；关掉时清空
@@ -742,9 +745,7 @@ function registerIpc() {
       concurrency,
       maxSpeed,
       subAutoCheck: next.subAutoCheck == null ? !!settings.subAutoCheck : !!next.subAutoCheck,
-      subCheckInterval: Math.max(5, Math.min(1440, parseInt(intervalRaw, 10) || 60)),
-      subLatestOnly: next.subLatestOnly == null ? !!settings.subLatestOnly : !!next.subLatestOnly,
-      subAutoDownload: next.subAutoDownload == null ? !!settings.subAutoDownload : !!next.subAutoDownload
+      subCheckInterval: Math.max(5, Math.min(1440, parseInt(intervalRaw, 10) || 60))
     })
     store.write('settings.json', settings)
     await auth.applyProxy(settings)
@@ -956,6 +957,10 @@ function registerIpc() {
     if (sub.site === 'bilibili' && ['all', 'normal', 'charging'].includes(payload.filter)) {
       sub.filter = payload.filter
     }
+    const name = String((payload && payload.name) || '').trim().slice(0, 60)
+    if (name) sub.name = name
+    if (payload && payload.latestOnly != null) sub.latestOnly = sub.site === 'bilibili' && !!payload.latestOnly
+    if (payload && payload.autoDownload != null) sub.autoDownload = !!payload.autoDownload
     // 云同步跟订阅走：选了网盘就落一条上传任务，选「不上传」就删掉
     const cloud = payload && payload.cloud
     if (cloud && typeof cloud === 'object') {
@@ -1080,6 +1085,12 @@ function registerIpc() {
   })
 
   ipcMain.handle('ugreen:listDir', (_e, p) => ugreen.listDir(p))
+
+  ipcMain.handle('ugreen:mkdir', async (_e, p) => {
+    await ugreen.ensureDir(p)
+    log(`新建绿联云目录 ${p}`)
+    return { ok: true, path: p }
+  })
 
   ipcMain.handle('upload:list', () => upload.list())
 

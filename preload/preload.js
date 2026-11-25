@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('api', {
   ugreenLogin: () => ipcRenderer.invoke('ugreen:login'),
   ugreenLogout: () => ipcRenderer.invoke('ugreen:logout'),
   ugreenListDir: (p) => ipcRenderer.invoke('ugreen:listDir', p),
+  ugreenMkdir: (p) => ipcRenderer.invoke('ugreen:mkdir', p),
   listUploads: () => ipcRenderer.invoke('upload:list'),
   saveUpload: (task) => ipcRenderer.invoke('upload:save', task),
   removeUpload: (id) => ipcRenderer.invoke('upload:remove', id),

@@ -1502,8 +1502,10 @@ async function removeSubscription(s) {
     }
     renderSubscriptions()
     setSubNotice(null, '已取消订阅', true)
+    return true
   } catch (err) {
     setSubNotice(null, '取消订阅失败：' + humanizeError(err.message))
+    return false
   }
 }
 
@@ -1513,6 +1515,10 @@ function openSubSettings(s) {
   subSettingsTarget = s
   $('subSettingsTitle').textContent = `订阅设置 · ${s.name || s.id}`
   $('subSettingsSub').textContent = subTypeLabel(s)
+  $('subName').value = s.name || ''
+  $('subLatestOnly').checked = !!s.latestOnly
+  $('subLatestOnlyWrap').classList.toggle('hidden', siteOf(s) !== 'bilibili')
+  $('subAutoDownload').checked = !!s.autoDownload
   $('subFilterRow').classList.toggle('hidden', siteOf(s) !== 'bilibili')
   for (const radio of document.querySelectorAll('input[name=subFilter]')) {
     radio.checked = radio.value === (s.filter || 'all')
@@ -1596,7 +1602,14 @@ async function saveSubSettings() {
   const btn = $('subSettingsSave')
   btn.disabled = true
   try {
-    const updated = await window.api.saveSubSettings({ key: target.key, filter, cloud })
+    const updated = await window.api.saveSubSettings({
+      key: target.key,
+      name: $('subName').value.trim(),
+      latestOnly: siteOf(target) === 'bilibili' && $('subLatestOnly').checked,
+      autoDownload: $('subAutoDownload').checked,
+      filter,
+      cloud
+    })
     updateSubsCache(updated)
     await loadUploadTasks()
     // 改了更新范围后展开列表跟着重新过滤
@@ -1903,8 +1916,6 @@ async function loadSettings() {
     $('maxSpeed').value = settingsCache.maxSpeed ? settingsCache.maxSpeed : ''
     $('subAutoCheck').checked = !!settingsCache.subAutoCheck
     $('subCheckInterval').value = settingsCache.subCheckInterval || 60
-    $('subLatestOnly').checked = !!settingsCache.subLatestOnly
-    $('subAutoDownload').checked = !!settingsCache.subAutoDownload
     syncProxyInput()
   } catch (_) { /* 读取失败沿用默认值 */ }
 }
@@ -2028,8 +2039,45 @@ function toggleCloudBody() {
 }
 
 function openCloudDir() {
+  const name = subFolderName()
+  $('dirNew').textContent = name ? `新建「${name}」文件夹` : '新建文件夹'
+  $('dirMsg').textContent = ''
   $('dirModal').classList.remove('hidden')
   return loadUgDir(cloudRootPath())
+}
+
+// 新建文件夹用的名字：取订阅设置里填的名称，去掉路径里不能用的字符
+function subFolderName() {
+  const raw = String($('subName').value || (subSettingsTarget && subSettingsTarget.name) || '').trim()
+  return raw.replace(/[\\/:*?"<>|]/g, '_').slice(0, 60)
+}
+
+function setDirMsg(text, ok) {
+  const el = $('dirMsg')
+  el.textContent = text
+  el.classList.toggle('ok', !!ok)
+}
+
+// 在当前打开的目录下，按订阅名建一个文件夹并选中它
+async function createSubFolder() {
+  const name = subFolderName()
+  if (!name) return setDirMsg('先在上面的「订阅名称」里填个名字')
+  if (ugDirPath === '/volume1') return setDirMsg('请先进入一个共享文件夹')
+  const full = `${ugDirPath}/${name}`
+  $('dirNew').disabled = true
+  setDirMsg('正在新建…')
+  try {
+    await window.api.ugreenMkdir(full)
+    // 建完直接进去，这样「选择当前目录」拿到的就是这个订阅文件夹
+    await loadUgDir(full)
+    $('subCloudRoot').value = full === '/volume1' || full.startsWith('/volume1/') ? 'share' : 'home'
+    $('subCloudDest').value = full
+    setDirMsg(`已新建并进入「${name}」`)
+  } catch (err) {
+    setDirMsg('新建失败：' + humanizeError(err.message))
+  } finally {
+    $('dirNew').disabled = false
+  }
 }
 
 function closeUgDir() {
@@ -2138,6 +2186,7 @@ async function clearSubCloudLocal() {
 
 $('dirClose').addEventListener('click', closeUgDir)
 $('dirCancel').addEventListener('click', closeUgDir)
+$('dirNew').addEventListener('click', createSubFolder)
 $('dirModal').addEventListener('click', (e) => {
   if (e.target === $('dirModal')) closeUgDir()
 })
@@ -2199,6 +2248,12 @@ $('subPreviewMore').addEventListener('click', showMorePreview)
 $('subSettingsClose').addEventListener('click', closeSubSettings)
 $('subSettingsCancel').addEventListener('click', closeSubSettings)
 $('subSettingsSave').addEventListener('click', saveSubSettings)
+$('subSettingsRemove').addEventListener('click', async () => {
+  const target = subSettingsTarget
+  if (!target) return
+  const ok = await removeSubscription(target)
+  if (ok) closeSubSettings()
+})
 $('subIgnoreSelectAll').addEventListener('click', () => {
   for (const check of document.querySelectorAll('#subIgnoreList .sub-ignore-check')) check.checked = true
 })
@@ -2356,9 +2411,7 @@ $('saveSubsSettings').addEventListener('click', async () => {
   try {
     settingsCache = await window.api.setSettings(Object.assign({}, settingsCache, {
       subAutoCheck: $('subAutoCheck').checked,
-      subCheckInterval: minutes,
-      subLatestOnly: $('subLatestOnly').checked,
-      subAutoDownload: $('subAutoDownload').checked
+      subCheckInterval: minutes
     }))
     $('subsSettingsStatus').textContent = '已保存'
     $('subsSettingsStatus').classList.add('ok')
@@ -2433,13 +2486,12 @@ window.api.onSubsAuto((p) => {
   loadSubscriptions()
   // 自动下载交给下载队列，任务列表里能和手动下载一样看到进度
   let queued = 0
-  if (p.autoDownload) {
-    let index = 0
-    for (const f of found) {
-      for (const v of f.videos || []) {
-        downloadVideoItem(v, 'a', index++, f.key)
-        queued++
-      }
+  let index = 0
+  for (const f of found) {
+    if (!f.autoDownload) continue
+    for (const v of f.videos || []) {
+      downloadVideoItem(v, 'a', index++, f.key)
+      queued++
     }
   }
   for (const site of ['bilibili', 'hanime']) {
@@ -2447,7 +2499,7 @@ window.api.onSubsAuto((p) => {
     if (!mine.length) continue
     const names = mine.map((f) => f.name).slice(0, 3).join('、')
     const more = mine.length > 3 ? ` 等 ${mine.length} 个订阅` : ''
-    setSubNotice(site, p.autoDownload && queued
+    setSubNotice(site, queued && mine.some((f) => f.autoDownload)
       ? `自动检测到新视频，已加入下载：${names}${more}`
       : `自动检测发现新视频：${names}${more}`, true)
   }

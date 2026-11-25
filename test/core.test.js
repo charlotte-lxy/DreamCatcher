@@ -97,8 +97,6 @@ test('store: 默认代理模式为 system', () => {
   assert.strictEqual(store.DEFAULTS.maxSpeed, 0)
   assert.strictEqual(store.DEFAULTS.subAutoCheck, false)
   assert.strictEqual(store.DEFAULTS.subCheckInterval, 60)
-  assert.strictEqual(store.DEFAULTS.subLatestOnly, false)
-  assert.strictEqual(store.DEFAULTS.subAutoDownload, false)
 })
 
 test('bvidFromFilename: 只识别文件名中的完整 BV 号', () => {

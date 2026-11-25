@@ -276,8 +276,22 @@ body {
 .sub-ignore-main { min-width: 0; }
 .sub-ignore-title { font-size: 13px; color: #dfe3ea; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sub-ignore-meta { font-size: 11px; color: #6c7480; margin-top: 2px; }
-.summary-group .up-list { max-height: 420px; }
-.summary-group .up-toolbar .muted { max-width: 440px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub-item.clickable { cursor: pointer; }
+.sub-item.clickable:hover { border-color: #3a4150; background: #161922; }
+.sub-item.expanded { border-color: #4a3f8a; }
+.sub-caret { color: #6c7480; font-size: 11px; width: 10px; text-align: center; }
+.sub-expand {
+  margin: -2px 0 6px; padding: 10px 12px 12px;
+  border: 1px solid #232830; border-top: none; border-radius: 0 0 10px 10px;
+  background: #0f1116;
+}
+.sub-expand .up-list { max-height: 380px; margin-top: 4px; }
+.sub-preview { margin-bottom: 14px; }
+.sub-preview > .sub-preview-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.sub-preview .sub-preview-name { font-size: 14px; font-weight: 600; color: #dfe3ea; }
+.sub-preview .sub-preview-meta { color: #6c7480; font-size: 12px; margin-top: 2px; }
+.sub-preview .sub-preview-actions { display: flex; gap: 6px; align-items: center; flex: none; }
+.sub-preview .up-list { max-height: 360px; }
 
 /* ---------- 筛选弹窗 ---------- */
 .filter-modal { width: min(520px, 100%); }

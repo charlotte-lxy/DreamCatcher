@@ -115,14 +115,32 @@
             <div class="row">
               <input id="subUrl" class="input" type="text" spellcheck="false"
                      placeholder="粘贴 B 站 UP 主空间链接，或 Hanime 播放清单 / 上传者 / 搜索链接" />
-              <button id="subAdd" class="btn primary">添加订阅</button>
+              <button id="subAdd" class="btn primary">搜索订阅</button>
             </div>
             <div id="subStatus" class="status"></div>
             <div id="subProgress" class="up-progress hidden">
               <div class="bar"><i id="subProgressFill"></i></div>
               <span id="subProgressText">已获取 0 个视频</span>
             </div>
-            <p class="hint">自动识别站点：B 站空间链接会拉取该 UP 的全部视频，Hanime 支持 playlist / user / search 三种链接；文件名里带 BV 号或 Hanime 数字 ID 的视为已下载，已下载的默认不勾选。</p>
+            <p class="hint">自动识别站点：B 站空间链接会拉取该 UP 的全部视频，Hanime 支持 playlist / user / search 三种链接；搜索结果先列最新 10 个作品，可继续查看更多，确认后再点「添加订阅」。</p>
+          </div>
+
+          <div id="subPreview" class="card hidden">
+            <div class="row">
+              <div id="subPreviewAvatar" class="sub-avatar"></div>
+              <div class="sub-main">
+                <div id="subPreviewName" class="sub-name"></div>
+                <div id="subPreviewMeta" class="sub-meta"></div>
+              </div>
+              <span class="spacer"></span>
+              <button id="subPreviewAdd" class="btn primary small">添加订阅</button>
+              <button id="subPreviewCancel" class="btn ghost small">取消</button>
+            </div>
+            <div id="subPreviewList" class="up-list"></div>
+            <div class="row">
+              <button id="subPreviewMore" class="btn ghost small hidden">查看更多</button>
+              <span id="subPreviewCount" class="muted"></span>
+            </div>
           </div>
         </div>
 
@@ -134,37 +152,9 @@
               <span class="spacer"></span>
               <span id="subCount" class="muted"></span>
             </div>
+            <p class="hint">点一下订阅条目展开它还没下载的更新，可以勾选后批量下载或批量忽略；更新数量来自上一次检查，点「检查更新」或自动检测后刷新。</p>
             <div id="subList" class="subs"><div class="empty">还没有订阅，先去「添加订阅」添加</div></div>
           </div>
-
-          <div id="subCompareWrap" class="card hidden">
-            <div class="up-toolbar">
-              <span id="subCompareTitle" class="sub-compare-title">比对清单</span>
-              <span id="subCompareSummary" class="muted"></span>
-              <span class="spacer"></span>
-              <span id="subSelected" class="up-selected">已选 0</span>
-              <button id="subSelectMissing" class="btn ghost small">全选待下载</button>
-              <button id="subSelectNone" class="btn ghost small">取消选择</button>
-              <button id="subIgnore" class="btn ghost small" disabled>批量忽略</button>
-              <button id="subDownload" class="btn primary small" disabled>批量下载</button>
-            </div>
-            <div id="subItems" class="up-list"></div>
-          </div>
-
-          <div class="card">
-            <div class="row">
-              <h3>更新汇总</h3>
-              <span id="summaryStatus" class="muted"></span>
-              <span class="spacer"></span>
-              <button id="summaryRefresh" class="btn ghost small">刷新汇总</button>
-            </div>
-            <div id="summaryProgress" class="up-progress hidden">
-              <div class="bar"><i id="summaryProgressFill"></i></div>
-              <span id="summaryProgressText">正在检查订阅…</span>
-            </div>
-            <p class="hint">按作者分组列出还没下载、也没上传的更新；B 站按订阅设置里的更新范围过滤，忽略清单不显示。</p>
-          </div>
-          <div id="summaryGroups"></div>
         </div>
       </section>
 

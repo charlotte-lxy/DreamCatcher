@@ -134,11 +134,7 @@ function onSubChange() {
     for (const panel of document.querySelectorAll('#page-subscribe .panel')) {
       panel.classList.toggle('hidden', panel.dataset.panel !== currentSub.subscribe)
     }
-    updateSubCompareVisibility()
-    if (currentSub.subscribe === 'manage') {
-      loadSubscriptions()
-      loadSummary()
-    }
+    if (currentSub.subscribe === 'manage') loadSubscriptions()
   } else if (currentModule === 'settings') {
     for (const panel of document.querySelectorAll('#page-settings .panel')) {
       panel.classList.toggle('hidden', panel.dataset.panel !== currentSub.settings)
@@ -1060,15 +1056,16 @@ function startBatchDownload() {
   $('upStatus').classList.add('ok')
 }
 
-/* ---------------- 订阅（B 站 / Hanime / 更新汇总） ---------------- */
+/* ---------------- 订阅（B 站 / Hanime / 订阅管理） ---------------- */
 let subsCache = []
-let subVideos = []
-let subCompare = null
 let subBusy = false
 let subSettingsTarget = null
-let summaryGroups = []
-let summaryBusy = false
-let summaryLoaded = false
+let previewResult = null
+let previewShown = 0
+let expandedKey = ''
+let expandedVideos = []
+
+const PREVIEW_STEP = 10
 
 function siteOf(s) {
   return s && s.site === 'hanime' ? 'hanime' : 'bilibili'
@@ -1109,6 +1106,13 @@ function updateSubsCache(rec) {
   else subsCache.unshift(rec)
 }
 
+// 展开用的待下载清单：B 站按「更新范围」再过滤一次，改了范围不用重新联网
+function subUpdates(s) {
+  const list = Array.isArray(s.updates) ? s.updates : []
+  if (siteOf(s) !== 'bilibili' || s.filter === 'all') return list
+  return list.filter((v) => (s.filter === 'charging' ? !!v.charging : !v.charging))
+}
+
 function renderSubscriptions() {
   const box = $('subList')
   box.innerHTML = ''
@@ -1121,7 +1125,165 @@ function renderSubscriptions() {
     return
   }
   const sorted = subsCache.slice().sort((a, b) => (Number(b.addedAt) || 0) - (Number(a.addedAt) || 0))
-  for (const s of sorted) box.appendChild(subRow(s))
+  for (const s of sorted) {
+    box.appendChild(subRow(s))
+    // 一次只展开一个订阅
+    if (s.key === expandedKey) box.appendChild(subExpandEl(s))
+  }
+}
+
+function toggleExpand(s) {
+  if (expandedKey === s.key) {
+    expandedKey = ''
+    expandedVideos = []
+    renderSubscriptions()
+    return
+  }
+  expandedKey = s.key
+  expandedVideos = subUpdates(s).map((v) => Object.assign({}, v, { selected: true }))
+  renderSubscriptions()
+}
+
+// 点开订阅后展开的更新列表：勾选、批量忽略、批量下载
+function subExpandEl(s) {
+  const box = document.createElement('div')
+  box.className = 'sub-expand'
+  const bar = document.createElement('div')
+  bar.className = 'up-toolbar'
+  const info = document.createElement('span')
+  info.className = 'sub-expand-info'
+  const selected = document.createElement('span')
+  selected.className = 'up-selected'
+  const spacer = document.createElement('span')
+  spacer.className = 'spacer'
+  const all = document.createElement('button')
+  all.className = 'btn ghost small'
+  all.textContent = '全选'
+  const none = document.createElement('button')
+  none.className = 'btn ghost small'
+  none.textContent = '取消选择'
+  const ignore = document.createElement('button')
+  ignore.className = 'btn ghost small'
+  const download = document.createElement('button')
+  download.className = 'btn primary small'
+  bar.append(info, selected, spacer, all, none, ignore, download)
+
+  const list = document.createElement('div')
+  list.className = 'up-list'
+  list.innerHTML = ''
+
+  const refresh = () => {
+    const n = expandedVideos.filter((v) => v.selected).length
+    selected.textContent = `已选 ${n}`
+    ignore.textContent = n ? `批量忽略 (${n})` : '批量忽略'
+    ignore.disabled = n === 0
+    download.textContent = n ? `批量下载 (${n})` : '批量下载'
+    download.disabled = n === 0
+  }
+
+  if (!expandedVideos.length) {
+    info.textContent = '没有待下载的更新'
+    const empty = document.createElement('div')
+    empty.className = 'empty'
+    empty.textContent = '这个订阅的更新都已下载或已忽略'
+    list.appendChild(empty)
+    refresh()
+    box.append(bar, list)
+    return box
+  }
+
+  info.textContent = `待下载 ${expandedVideos.length} 个`
+  for (const v of expandedVideos) {
+    list.appendChild(createVideoRow(v, refresh, (video) => ignoreVideos(s.key, [video], false)))
+  }
+  all.addEventListener('click', () => {
+    for (const v of expandedVideos) v.selected = true
+    renderSubscriptions()
+  })
+  none.addEventListener('click', () => {
+    for (const v of expandedVideos) v.selected = false
+    renderSubscriptions()
+  })
+  ignore.addEventListener('click', () => ignoreVideos(s.key, expandedVideos.filter((v) => v.selected), true))
+  download.addEventListener('click', downloadExpanded)
+  refresh()
+  box.append(bar, list)
+  return box
+}
+
+function downloadExpanded() {
+  const key = expandedKey
+  const chosen = expandedVideos.filter((v) => v.selected)
+  if (!chosen.length) return
+  const count = chosen.length
+  const jobs = chosen.map((v, i) => downloadVideoItem(v, 's', i, key))
+  for (const v of chosen) v.selected = false
+  renderSubscriptions()
+  setSubNotice(null, `已加入下载队列：${count} 个视频`, true)
+  Promise.allSettled(jobs).then(() => refreshSubUpdates(key, chosen.map((v) => v.id)))
+}
+
+// 下载结束后只重扫本地，从待下载清单里划掉已经落地的
+async function refreshSubUpdates(key, ids) {
+  try {
+    const r = await window.api.compareSub({ key, ids })
+    if (!r.subscription) return
+    updateSubsCache(r.subscription)
+    if (expandedKey === key) {
+      expandedVideos = subUpdates(r.subscription).map((v) => Object.assign({}, v, { selected: true }))
+    }
+    renderSubscriptions()
+  } catch (_) { /* 本地重扫失败不影响已完成的下载 */ }
+}
+
+function hidePreview() {
+  previewResult = null
+  previewShown = 0
+  $('subPreview').classList.add('hidden')
+  $('subPreviewList').innerHTML = ''
+  $('subPreviewCount').textContent = ''
+}
+
+function renderPreview() {
+  const r = previewResult
+  if (!r) return
+  const s = r.preview
+  const avatar = $('subPreviewAvatar')
+  avatar.innerHTML = ''
+  const initial = String(s.name || '?').trim().slice(0, 1) || '?'
+  if (s.face) {
+    const img = document.createElement('img')
+    img.src = s.face
+    img.alt = ''
+    img.referrerPolicy = 'no-referrer'
+    img.addEventListener('error', () => {
+      img.remove()
+      avatar.textContent = initial
+    })
+    avatar.appendChild(img)
+  } else {
+    avatar.textContent = initial
+  }
+  $('subPreviewName').textContent = s.name || '未命名'
+  const kind = s.site === 'bilibili' ? 'B 站 UP' : subTypeLabel(s)
+  let meta = `${kind} · 共 ${r.total} 个作品 · 已下载 ${r.downloaded} 个 · 待下载 ${r.missing} 个`
+  if (r.exist) meta += ' · 已订阅过，添加会更新原有订阅'
+  $('subPreviewMeta').textContent = meta
+
+  const list = $('subPreviewList')
+  list.innerHTML = ''
+  const shown = Math.min(previewShown, s.videos.length)
+  for (const v of s.videos.slice(0, shown)) {
+    const row = createVideoRow(v, () => {}, null)
+    const check = row.querySelector('.up-check')
+    if (check) check.remove()
+    list.appendChild(row)
+  }
+  $('subPreviewMore').classList.toggle('hidden', shown >= s.videos.length)
+  $('subPreviewCount').textContent = shown >= s.videos.length
+    ? `已显示全部 ${s.videos.length} 个`
+    : `已显示 ${shown} / 共 ${s.videos.length} 个`
+  $('subPreview').classList.remove('hidden')
 }
 
 // 订阅的云同步配置就存在上传任务里（一个订阅一个任务）
@@ -1129,9 +1291,35 @@ function cloudTaskOf(s) {
   return ugTasks.find((t) => t.subKey === s.key) || null
 }
 
+async function ignoreVideos(key, videos, confirmFirst) {
+  if (!key || !videos || !videos.length) return
+  if (confirmFirst && !window.confirm(`忽略选中的 ${videos.length} 个视频？可在订阅设置 → 忽略清单中恢复。`)) return
+  try {
+    const updated = await window.api.ignoreSub({ key, videos })
+    updateSubsCache(updated)
+    const ids = new Set(videos.map((v) => String(v.id)))
+    if (expandedKey === key) {
+      expandedVideos = expandedVideos.filter((v) => !ids.has(String(v.id)))
+    }
+    if (subSettingsTarget && subSettingsTarget.key === key) {
+      subSettingsTarget = updated
+      renderIgnoreList(updated)
+    }
+    renderSubscriptions()
+    setSubNotice(siteOf(updated), `已忽略 ${videos.length} 个视频`, true)
+  } catch (err) {
+    window.alert('忽略失败：' + humanizeError(err.message))
+  }
+}
+
 function subRow(s) {
   const row = document.createElement('div')
-  row.className = 'sub-item'
+  row.className = 'sub-item clickable'
+  if (s.key === expandedKey) row.classList.add('expanded')
+  row.addEventListener('click', (e) => {
+    if (e.target.closest('button')) return
+    toggleExpand(s)
+  })
 
   const avatar = document.createElement('div')
   avatar.className = 'sub-avatar'
@@ -1165,7 +1353,8 @@ function subRow(s) {
     const kind = s.type === 'playlist' ? '清单' : (s.type === 'search' ? '搜索词' : '上传者')
     parts.push(`${kind} ${s.id}`)
   }
-  parts.push(`共 ${Number(s.lastCount) || 0} 个`, `未下载 ${Number(s.lastMissing) || 0} 个`)
+  const pending = subUpdates(s).length
+  parts.push(`共 ${Number(s.lastCount) || 0} 个`, pending ? `更新 ${pending} 个` : '无更新')
   if (s.ignored && s.ignored.length) parts.push(`忽略 ${s.ignored.length} 个`)
   parts.push(s.lastCheckAt ? `上次检查 ${fmtDate(s.lastCheckAt)}` : '尚未检查')
   const task = cloudTaskOf(s)
@@ -1190,7 +1379,10 @@ function subRow(s) {
   del.textContent = '取消订阅'
   del.disabled = subBusy
   del.addEventListener('click', () => removeSubscription(s))
-  actions.append(check, settings, del)
+  const caret = document.createElement('span')
+  caret.className = 'sub-caret'
+  caret.textContent = s.key === expandedKey ? '▾' : '▸'
+  actions.append(check, settings, del, caret)
 
   row.append(avatar, main, actions)
   return row
@@ -1200,7 +1392,7 @@ function setSubBusy(busy) {
   subBusy = busy
   const btn = $('subAdd')
   btn.disabled = busy
-  btn.textContent = busy ? '获取中…' : '添加订阅'
+  btn.textContent = busy ? '搜索中…' : '搜索订阅'
   for (const b of document.querySelectorAll('#subList button')) b.disabled = busy
 }
 
@@ -1225,118 +1417,55 @@ async function loadSubscriptions() {
   }
 }
 
-function updateSubCompareVisibility() {
-  const visible = !!subCompare && currentSub.subscribe === 'manage'
-  $('subCompareWrap').classList.toggle('hidden', !visible)
-}
-
-function updateSubSummary() {
-  const total = subVideos.length
-  const downloaded = subVideos.filter((v) => v.downloaded).length
-  const uploaded = subVideos.filter((v) => v.uploaded).length
-  const pending = subVideos.filter((v) => !v.downloaded && !v.uploaded).length
-  const ignored = subCompare && subCompare.subscription && subCompare.subscription.ignored
-    ? subCompare.subscription.ignored.length
-    : 0
-  let text = `网页 ${total} 个 · 已下载 ${downloaded} 个`
-  if (uploaded) text += ` · 已上传 ${uploaded} 个`
-  text += ` · 待下载 ${pending} 个`
-  if (ignored) text += ` · 已忽略 ${ignored} 个`
-  $('subCompareSummary').textContent = text
-}
-
-function updateSubSelection() {
-  const n = subVideos.filter((v) => v.selected).length
-  $('subSelected').textContent = `已选 ${n}`
-  const download = $('subDownload')
-  download.textContent = n ? `批量下载 (${n})` : '批量下载'
-  download.disabled = n === 0
-  const ignore = $('subIgnore')
-  ignore.textContent = n ? `批量忽略 (${n})` : '批量忽略'
-  ignore.disabled = n === 0
-}
-
-function renderSubItems() {
-  const box = $('subItems')
-  box.innerHTML = ''
-  if (!subVideos.length) {
-    const empty = document.createElement('div')
-    empty.className = 'empty'
-    empty.textContent = '没有待显示的视频'
-    box.appendChild(empty)
-    return
-  }
-  const frag = document.createDocumentFragment()
-  for (const v of subVideos) {
-    const row = createVideoRow(v, updateSubSelection, (video) => {
-      ignoreVideos(subCompare.subscription.key, [video], false)
-    })
-    if (v.downloaded || v.uploaded) {
-      if (v.downloaded) row.classList.add('downloaded')
-      if (v.uploaded) row.classList.add('uploaded')
-      const meta = row.querySelector('.up-meta')
-      if (v.downloaded) {
-        const badge = document.createElement('span')
-        badge.className = 'up-downloaded'
-        badge.textContent = '已下载'
-        if (v.localPath) badge.title = v.localPath
-        meta.appendChild(badge)
-      }
-      if (v.uploaded) {
-        const badge = document.createElement('span')
-        badge.className = 'up-uploaded'
-        badge.textContent = '已上传'
-        meta.appendChild(badge)
-      }
-    }
-    frag.appendChild(row)
-  }
-  box.appendChild(frag)
-  box.scrollTop = 0
-}
-
-function showSubCompare(res) {
-  subCompare = res
-  subVideos = res.videos || []
-  $('subCompareTitle').textContent = `比对清单 · ${(res.subscription && res.subscription.name) || '订阅'}`
-  updateSubSummary()
-  renderSubItems()
-  updateSubSelection()
-  updateSubCompareVisibility()
-}
-
-function setSubSelection(missingOnly) {
-  for (const v of subVideos) v.selected = missingOnly ? (!v.downloaded && !v.uploaded) : false
-  renderSubItems()
-  updateSubSelection()
-}
-
-// 一个输入框同时接受 B 站空间链接和 Hanime 链接，按链接自动识别站点
-async function addSubscription() {
+// 一个输入框同时接受 B 站空间链接和 Hanime 链接，先搜索预览再添加
+async function searchSubscription() {
   if (subBusy) return
   const url = $('subUrl').value.trim()
   if (!url) return setSubNotice(null, '先粘贴 B 站 UP 主空间链接或 Hanime 链接')
-  // hanime 站点域名是 hanime1.me（main/hanime.js 也只认这个域名）
-  const isHanime = /hanime1\.me/i.test(url)
-  const isBili = /bilibili\.com|b23\.tv/i.test(url)
-  if (!isHanime && !isBili) {
+  if (!/hanime1\.me|bilibili\.com|b23\.tv/i.test(url)) {
     return setSubNotice(null, '只支持 B 站空间链接和 Hanime 链接')
   }
   setSubBusy(true)
-  setSubNotice(null, isHanime ? '正在获取 Hanime 清单…' : '正在获取网页清单并比对本地文件…')
+  setSubNotice(null, '正在搜索订阅…')
   showSubProgress(null, true)
+  hidePreview()
   try {
-    const res = isHanime ? await window.api.addSubHanime(url) : await window.api.addSub(url)
-    $('subUrl').value = ''
+    previewResult = await window.api.previewSub(url)
+    previewShown = Math.min(PREVIEW_STEP, previewResult.preview.videos.length)
+    renderPreview()
+    setSubNotice(null, `找到 ${previewResult.total} 个作品，已下载 ${previewResult.downloaded} 个`, true)
+  } catch (err) {
+    setSubNotice(null, '搜索失败：' + humanizeError(err.message))
+  } finally {
+    showSubProgress(null, false)
+    setSubBusy(false)
+  }
+}
+
+function showMorePreview() {
+  if (!previewResult) return
+  previewShown += PREVIEW_STEP
+  renderPreview()
+}
+
+async function addPreviewSubscription() {
+  if (!previewResult || subBusy) return
+  setSubBusy(true)
+  try {
+    const res = await window.api.addSubPreview(previewResult.preview)
     updateSubsCache(res.subscription)
-    renderSubscriptions()
-    showSubCompare(res)
-    setSubNotice(null, `订阅成功：共 ${res.videos.length} 个视频，已下载 ${res.downloaded} 个，待下载 ${res.missing} 个`, true)
-    summaryLoaded = false
+    hidePreview()
+    $('subUrl').value = ''
+    // 添加完直接跳到订阅管理，并展开这个订阅
+    expandedKey = res.subscription.key
+    expandedVideos = subUpdates(res.subscription).map((v) => Object.assign({}, v, { selected: true }))
+    currentSub.subscribe = 'manage'
+    renderSubbar()
+    onSubChange()
+    setSubNotice(null, `订阅成功：共 ${res.videos.length} 个视频，待下载 ${res.subscription.lastMissing} 个`, true)
   } catch (err) {
     setSubNotice(null, '添加失败：' + humanizeError(err.message))
   } finally {
-    showSubProgress(null, false)
     setSubBusy(false)
   }
 }
@@ -1345,19 +1474,18 @@ async function checkSubscription(s) {
   if (subBusy) return
   setSubBusy(true)
   setSubNotice(null, `正在检查「${s.name}」…`)
-  showSubProgress(null, true)
   try {
     const res = await window.api.checkSub(s.key)
     updateSubsCache(res.subscription)
+    if (expandedKey === s.key) {
+      expandedVideos = subUpdates(res.subscription).map((v) => Object.assign({}, v, { selected: true }))
+    }
     renderSubscriptions()
-    showSubCompare(res)
     const upText = res.uploaded ? `，已上传 ${res.uploaded} 个` : ''
-    setSubNotice(null, `检查完成：已下载 ${res.downloaded} 个${upText}，待下载 ${res.missing} 个`, true)
-    summaryLoaded = false
+    setSubNotice(null, `检查完成：已下载 ${res.downloaded} 个${upText}，待下载 ${res.subscription.lastMissing} 个`, true)
   } catch (err) {
     setSubNotice(null, '检查失败：' + humanizeError(err.message))
   } finally {
-    showSubProgress(null, false)
     setSubBusy(false)
   }
 }
@@ -1368,124 +1496,15 @@ async function removeSubscription(s) {
   try {
     subsCache = await window.api.removeSub(s.key)
     await loadUploadTasks()
-    renderSubscriptions()
-    if (subCompare && subCompare.subscription.key === s.key) {
-      subCompare = null
-      subVideos = []
-      $('subCompareWrap').classList.add('hidden')
+    if (expandedKey === s.key) {
+      expandedKey = ''
+      expandedVideos = []
     }
-    summaryLoaded = false
+    renderSubscriptions()
     setSubNotice(null, '已取消订阅', true)
   } catch (err) {
     setSubNotice(null, '取消订阅失败：' + humanizeError(err.message))
   }
-}
-
-async function refreshSubLocal(key) {
-  if (!subCompare || subCompare.subscription.key !== key) return
-  try {
-    const r = await window.api.compareSub({ key, ids: subVideos.map((v) => v.id) })
-    for (const v of subVideos) {
-      v.downloaded = !!r.map[v.id]
-      v.localPath = r.map[v.id] || ''
-      if (v.downloaded) v.selected = false
-    }
-    if (r.subscription) {
-      subCompare.subscription = r.subscription
-      updateSubsCache(r.subscription)
-      renderSubscriptions()
-    }
-    renderSubItems()
-    updateSubSummary()
-    updateSubSelection()
-    summaryLoaded = false
-  } catch (_) { /* 本地重扫失败不影响已完成的下载 */ }
-}
-
-function startSubDownload() {
-  if (!subCompare || !subCompare.subscription) return
-  const chosen = subVideos.filter((v) => v.selected)
-  if (!chosen.length) return
-  const key = subCompare.subscription.key
-  const site = siteOf(subCompare.subscription)
-  const count = chosen.length
-  const jobs = chosen.map((v, i) => downloadVideoItem(v, 's', i, key))
-  for (const v of chosen) v.selected = false
-  renderSubItems()
-  updateSubSelection()
-  setSubNotice(site, `已加入下载队列：${count} 个视频`, true)
-  Promise.allSettled(jobs).then(() => refreshSubLocal(key))
-}
-
-function updateSummaryGroupSelection(group) {
-  if (!group._selected) return
-  const n = group.videos.filter((v) => v.selected).length
-  group._selected.textContent = `已选 ${n}`
-  group._ignoreBtn.disabled = n === 0
-  group._downloadBtn.disabled = n === 0
-}
-
-function selectSummaryGroup(group, value) {
-  for (const v of group.videos) v.selected = value
-  if (group._list) {
-    for (const row of group._list.querySelectorAll('.up-item')) {
-      row.classList.toggle('selected', value)
-      const check = row.querySelector('.up-check')
-      if (check) check.checked = value
-    }
-  }
-  updateSummaryGroupSelection(group)
-}
-
-function removeSummaryVideos(key, ids) {
-  let changed = false
-  summaryGroups = summaryGroups.map((g) => {
-    if (g.key !== key) return g
-    const before = g.videos.length
-    g.videos = g.videos.filter((v) => !ids.has(String(v.id)))
-    if (g.videos.length !== before) changed = true
-    return g
-  }).filter((g) => g.videos.length)
-  if (changed && currentSub.subscribe === 'summary') {
-    $('summaryStatus').textContent = `${summaryGroups.length} 个订阅有更新`
-    renderSummary()
-  }
-}
-
-async function ignoreVideos(key, videos, confirmFirst) {
-  if (!key || !videos || !videos.length) return
-  if (confirmFirst && !window.confirm(`忽略选中的 ${videos.length} 个视频？可在订阅设置 → 忽略清单中恢复。`)) return
-  try {
-    const updated = await window.api.ignoreSub({ key, videos })
-    const missingIgnored = videos.filter((v) => !v.downloaded).length
-    updated.lastMissing = Math.max(0, (Number(updated.lastMissing) || 0) - missingIgnored)
-    updateSubsCache(updated)
-    renderSubscriptions()
-    const ids = new Set(videos.map((v) => String(v.id)))
-    if (subCompare && subCompare.subscription.key === key) {
-      subCompare.subscription = updated
-      subVideos = subVideos.filter((v) => !ids.has(String(v.id)))
-      subCompare.videos = subVideos
-      renderSubItems()
-      updateSubSummary()
-      updateSubSelection()
-    }
-    removeSummaryVideos(key, ids)
-    if (subSettingsTarget && subSettingsTarget.key === key) {
-      subSettingsTarget = updated
-      renderIgnoreList(updated)
-    }
-    setSubNotice(siteOf(updated), `已忽略 ${videos.length} 个视频`, true)
-  } catch (err) {
-    window.alert('忽略失败：' + humanizeError(err.message))
-  }
-}
-
-function ignoreSelected() {
-  if (!subCompare || !subCompare.subscription) return
-  const chosen = subVideos.filter((v) => v.selected)
-  if (!chosen.length) return
-  ignoreVideos(subCompare.subscription.key, chosen, true)
 }
 
 /* ---------------- 订阅设置 / 忽略清单 ---------------- */
@@ -1580,12 +1599,12 @@ async function saveSubSettings() {
     const updated = await window.api.saveSubSettings({ key: target.key, filter, cloud })
     updateSubsCache(updated)
     await loadUploadTasks()
+    // 改了更新范围后展开列表跟着重新过滤
+    if (expandedKey === target.key) {
+      expandedVideos = subUpdates(updated).map((v) => Object.assign({}, v, { selected: true }))
+    }
     renderSubscriptions()
     closeSubSettings()
-    summaryLoaded = false
-    if (siteOf(target) === 'bilibili' && subCompare && subCompare.subscription.key === target.key) {
-      await checkSubscription(updated)
-    }
     setSubNotice(null, '订阅设置已保存', true)
   } catch (err) {
     window.alert('保存设置失败：' + humanizeError(err.message))
@@ -1604,155 +1623,16 @@ async function removeIgnoredSelected() {
   try {
     const updated = await window.api.unignoreSub({ key: target.key, ids })
     updateSubsCache(updated)
+    if (expandedKey === target.key) {
+      expandedVideos = subUpdates(updated).map((v) => Object.assign({}, v, { selected: true }))
+    }
     renderSubscriptions()
     subSettingsTarget = updated
     renderIgnoreList(updated)
-    summaryLoaded = false
-    if (subCompare && subCompare.subscription.key === target.key) {
-      closeSubSettings()
-      await checkSubscription(updated)
-    }
   } catch (err) {
     window.alert('移除忽略失败：' + humanizeError(err.message))
   } finally {
     btn.disabled = false
-  }
-}
-
-/* ---------------- 更新汇总 ---------------- */
-
-function summaryTypeLabel(g) {
-  if (g.site === 'bilibili') return 'B 站 UP'
-  if (g.type === 'playlist') return 'Hanime 播放清单'
-  if (g.type === 'search') return 'Hanime 搜索'
-  return 'Hanime 上传者'
-}
-
-function summaryBaseText(g) {
-  if (!g.hasLocal) return '本地与网盘都还没有该站视频，列出全部'
-  const when = g.latestLocalDateText || (g.latestLocalCreated ? fmtDate(g.latestLocalCreated) : '')
-  return `最新已有：${when}${g.latestLocalTitle ? ' · ' + g.latestLocalTitle : ''}`
-}
-
-function summaryGroupEl(g) {
-  const card = document.createElement('div')
-  card.className = 'card summary-group'
-
-  const bar = document.createElement('div')
-  bar.className = 'up-toolbar'
-  const title = document.createElement('span')
-  title.className = 'sub-compare-title'
-  title.textContent = g.name
-  const meta = document.createElement('span')
-  meta.className = 'muted'
-  meta.textContent = `${summaryTypeLabel(g)} · ${g.videos.length} 个更新 · ${summaryBaseText(g)}`
-  const spacer = document.createElement('span')
-  spacer.className = 'spacer'
-  const selected = document.createElement('span')
-  selected.className = 'up-selected'
-  selected.textContent = '已选 0'
-  const all = document.createElement('button')
-  all.className = 'btn ghost small'
-  all.textContent = '全选'
-  all.addEventListener('click', () => selectSummaryGroup(g, true))
-  const none = document.createElement('button')
-  none.className = 'btn ghost small'
-  none.textContent = '取消选择'
-  none.addEventListener('click', () => selectSummaryGroup(g, false))
-  const ignore = document.createElement('button')
-  ignore.className = 'btn ghost small'
-  ignore.textContent = '批量忽略'
-  ignore.disabled = true
-  ignore.addEventListener('click', () => {
-    const chosen = g.videos.filter((v) => v.selected)
-    ignoreVideos(g.key, chosen, true)
-  })
-  const download = document.createElement('button')
-  download.className = 'btn primary small'
-  download.textContent = '批量下载'
-  download.disabled = true
-  download.addEventListener('click', () => {
-    const chosen = g.videos.filter((v) => v.selected)
-    if (!chosen.length) return
-    const jobs = chosen.map((v, i) => downloadVideoItem(v, 's', i, g.key))
-    const ids = new Set(chosen.map((v) => String(v.id)))
-    summaryGroups = summaryGroups.map((x) => x.key === g.key
-      ? Object.assign({}, x, { videos: x.videos.filter((v) => !ids.has(String(v.id))) })
-      : x).filter((x) => x.videos.length)
-    summaryLoaded = false
-    $('summaryStatus').textContent = `${summaryGroups.length} 个订阅有更新`
-    renderSummary()
-    Promise.allSettled(jobs)
-  })
-
-  bar.append(title, meta, spacer, selected, all, none, ignore, download)
-
-  const list = document.createElement('div')
-  list.className = 'up-list'
-  const frag = document.createDocumentFragment()
-  for (const v of g.videos) {
-    frag.appendChild(createVideoRow(v, () => updateSummaryGroupSelection(g), (video) => {
-      ignoreVideos(g.key, [video], false)
-    }))
-  }
-  list.appendChild(frag)
-
-  g._selected = selected
-  g._ignoreBtn = ignore
-  g._downloadBtn = download
-  g._list = list
-  updateSummaryGroupSelection(g)
-
-  card.append(bar, list)
-  return card
-}
-
-function renderSummary() {
-  const box = $('summaryGroups')
-  box.innerHTML = ''
-  if (!summaryGroups.length) {
-    const card = document.createElement('div')
-    card.className = 'card'
-    const empty = document.createElement('div')
-    empty.className = 'empty'
-    empty.textContent = '暂无更新'
-    card.appendChild(empty)
-    box.appendChild(card)
-    return
-  }
-  for (const g of summaryGroups) box.appendChild(summaryGroupEl(g))
-}
-
-async function loadSummary(force) {
-  if (summaryBusy) return
-  if (summaryLoaded && !force) {
-    renderSummary()
-    return
-  }
-  summaryBusy = true
-  summaryLoaded = true
-  $('summaryRefresh').disabled = true
-  $('summaryStatus').textContent = '正在检查订阅…'
-  $('summaryGroups').innerHTML = '<div class="card"><div class="empty">正在检查订阅…</div></div>'
-  $('summaryProgress').classList.remove('hidden')
-  $('summaryProgressFill').style.width = '0%'
-  $('summaryProgressText').textContent = '正在检查订阅…'
-  try {
-    const r = await window.api.summary()
-    summaryGroups = r.groups || []
-    renderSummary()
-    const errors = r.errors && r.errors.length ? `，${r.errors.length} 个订阅检查失败` : ''
-    $('summaryStatus').textContent = `${summaryGroups.length} 个订阅有更新${errors}`
-    $('summaryStatus').title = (r.errors || []).map((e) => `${e.name}：${e.error}`).join('\n')
-  } catch (err) {
-    summaryGroups = []
-    summaryLoaded = false
-    renderSummary()
-    $('summaryStatus').textContent = '汇总失败：' + humanizeError(err.message)
-  } finally {
-    summaryBusy = false
-    $('summaryRefresh').disabled = false
-    $('summaryProgress').classList.add('hidden')
   }
 }
 
@@ -2308,15 +2188,13 @@ $('upSelectAll').addEventListener('click', () => setUpSelection(true))
 $('upSelectNone').addEventListener('click', () => setUpSelection(false))
 $('upDownload').addEventListener('click', startBatchDownload)
 
-$('subAdd').addEventListener('click', addSubscription)
+$('subAdd').addEventListener('click', searchSubscription)
 $('subUrl').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') addSubscription()
+  if (e.key === 'Enter') searchSubscription()
 })
-$('subSelectMissing').addEventListener('click', () => setSubSelection(true))
-$('subSelectNone').addEventListener('click', () => setSubSelection(false))
-$('subIgnore').addEventListener('click', ignoreSelected)
-$('subDownload').addEventListener('click', startSubDownload)
-$('summaryRefresh').addEventListener('click', () => loadSummary(true))
+$('subPreviewAdd').addEventListener('click', addPreviewSubscription)
+$('subPreviewCancel').addEventListener('click', hidePreview)
+$('subPreviewMore').addEventListener('click', showMorePreview)
 
 $('subSettingsClose').addEventListener('click', closeSubSettings)
 $('subSettingsCancel').addEventListener('click', closeSubSettings)
@@ -2547,16 +2425,6 @@ window.api.onSubProgress((p) => {
   const total = Number(p.total) || 0
   els.fill.style.width = (total ? Math.min(100, (loaded / total) * 100) : 0) + '%'
   els.text.textContent = total ? `已获取 ${loaded} / ${total} 个视频` : `已获取 ${loaded} 个视频`
-})
-
-window.api.onSummaryProgress((p) => {
-  if (!summaryBusy) return
-  const done = Number(p.done) || 0
-  const total = Number(p.total) || 0
-  $('summaryProgressFill').style.width = (total ? Math.min(100, (done / total) * 100) : 0) + '%'
-  $('summaryProgressText').textContent = total
-    ? `正在检查 ${done}/${total}${p.current ? '：' + p.current : ''}`
-    : '正在检查订阅…'
 })
 
 window.api.onSubsAuto((p) => {

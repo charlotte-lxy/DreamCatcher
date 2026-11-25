@@ -141,6 +141,8 @@ function normalizeSubscription(raw) {
     query: site === 'hanime' && type === 'search' ? id : String(raw.query || ''),
     name: String(raw.name || (site === 'bilibili' ? `UP ${id}` : `Hanime ${id}`)),
     face: String(raw.face || ''),
+    // 待下载清单跟着订阅一起存，展开订阅时不用再联网
+    updates: (Array.isArray(raw.updates) ? raw.updates : []).filter((v) => v && v.id),
     lastCheckAt: Number(raw.lastCheckAt) || 0,
     lastCount: Number(raw.lastCount) || 0,
     lastMissing: Number(raw.lastMissing) || 0
@@ -234,69 +236,40 @@ async function listSubscriptionVideos(sub, onProgress, local, knownIds) {
   }, known && known.size ? { stopIds: known } : {})
 }
 
-function sendSummaryProgress(p) {
-  if (win && !win.isDestroyed()) win.webContents.send('subs:summary:progress', p)
+// 待下载清单直接存进订阅记录：列表页只读缓存，检查更新/自动检测后才刷新
+const MAX_PENDING = 500
+
+function pendingUpdates(comparison) {
+  const list = (comparison && comparison.videos) || []
+  return list
+    .filter((v) => !v.downloaded && !v.uploaded)
+    .slice(0, MAX_PENDING)
+    .map((v) => ({
+      id: String(v.id),
+      title: String(v.title || v.id),
+      url: String(v.url || ''),
+      duration: Number(v.duration) || 0,
+      created: Number(v.created) || 0,
+      dateText: String(v.dateText || ''),
+      thumb: String(v.thumb || ''),
+      charging: !!v.charging,
+      subAuthor: String(v.subAuthor || '')
+    }))
 }
 
-let summaryRunning = false
-async function buildUpdateSummary() {
-  if (summaryRunning) throw new Error('更新汇总正在进行中，请稍候')
-  summaryRunning = true
-  const groups = []
-  const errors = []
-  const local = await subs.scanLocalMedia(effectiveDownloadDir())
-  const list = subscriptions.slice()
-  try {
-    for (let i = 0; i < list.length; i++) {
-      const sub = list[i]
-      sendSummaryProgress({ done: i, total: list.length, current: sub.name })
-      try {
-        // 本地已下载 + 云端已上传都算「已有」：订阅里的过滤与忽略清单照旧生效，
-        // 这样上传后删掉本地文件的视频不会又冒出来
-        const known = await knownVideoIds(sub, local)
-        const r = await listSubscriptionVideos(sub, null, local, known)
-        medialib.saveVideoList(sub.key, r.videos)
-        const filtered = applySubFilter(r.videos || [], sub)
-        const ignored = new Set((sub.ignored || []).map((v) => String(v.id)))
-        let cutoff = -1
-        for (let j = 0; j < filtered.length; j++) {
-          if (known.has(String(filtered[j].id))) {
-            cutoff = j
-            break
-          }
-        }
-        const base = cutoff >= 0 ? filtered.slice(0, cutoff) : filtered
-        const author = subDownloadAuthor(sub)
-        const videos = base
-          .filter((v) => !known.has(String(v.id)) && !ignored.has(String(v.id)))
-          .map((v) => Object.assign({}, v, { selected: true }, author ? { subAuthor: author } : {}))
-        if (videos.length) {
-          groups.push({
-            key: sub.key,
-            site: sub.site,
-            type: sub.type,
-            name: sub.name,
-            face: sub.face,
-            filter: sub.filter,
-            videos,
-            hasLocal: cutoff >= 0,
-            latestLocalTitle: cutoff >= 0 ? filtered[cutoff].title : '',
-            latestLocalDateText: cutoff >= 0 ? (filtered[cutoff].dateText || '') : '',
-            latestLocalCreated: cutoff >= 0 ? (Number(filtered[cutoff].created) || 0) : 0
-          })
-        }
-      } catch (err) {
-        errors.push({ key: sub.key, name: sub.name, error: err.message })
-        log(`更新汇总失败 ${sub.name}: ${err.message}`)
-      }
-      await sleep(250)
-    }
-  } finally {
-    summaryRunning = false
-    sendSummaryProgress({ done: list.length, total: list.length })
-  }
-  log(`更新汇总完成: ${groups.length} 个有更新, ${errors.length} 个失败`)
-  return { groups, errors, checkedAt: Date.now() }
+// 拉一遍清单、重算待下载，并写回订阅记录
+async function refreshSubscription(sub, local) {
+  const r = await listSubscriptionVideos(sub, sendSubProgress, local)
+  medialib.saveVideoList(sub.key, r.videos)
+  const localMap = sub.site === 'hanime' ? local.hanime : local.bilibili
+  const comparison = await buildSubComparison(sub, r.videos, localMap)
+  sub.lastCheckAt = Date.now()
+  // 仅拉取最新时只拿到最新一段，「共 N 个」保留上次的完整数量
+  if (!r.stopped) sub.lastCount = comparison.videos.length
+  sub.updates = pendingUpdates(comparison)
+  sub.lastMissing = sub.updates.length
+  if (!sub.name && r.author) sub.name = r.author
+  return Object.assign({ subscription: sub }, comparison)
 }
 
 // 定时自动检测订阅：只刷新清单和「待下载」数量，不自动下载
@@ -319,7 +292,8 @@ async function autoCheckSubscriptions() {
         const comparison = await buildSubComparison(sub, r.videos, localMap)
         sub.lastCheckAt = Date.now()
         if (!r.stopped) sub.lastCount = comparison.videos.length
-        sub.lastMissing = comparison.missing
+        sub.updates = pendingUpdates(comparison)
+        sub.lastMissing = sub.updates.length
         if (!sub.name && r.author) sub.name = r.author
         // 第一次检测只当基线，不然会把全部历史视频都报成「新增」
         const fresh = prevIds ? r.videos.filter((v) => !prevIds.has(String(v.id))) : []
@@ -842,64 +816,98 @@ function registerIpc() {
 
   ipcMain.handle('subs:list', () => subscriptions)
 
-  ipcMain.handle('subs:add', async (_e, url) => {
-    const list = await bili.listUpVideos(url, sendSubProgress)
-    let profile = { name: '', face: '' }
-    try {
-      profile = await bili.fetchUpProfile(list.mid)
-    } catch (err) {
-      log(`获取 UP 资料失败: ${err.message}`)
+  // 搜索订阅：先把作者和作品列出来，确认后再落库
+  ipcMain.handle('subs:preview', async (_e, url) => {
+    const target = String(url || '').trim()
+    if (!target) throw new Error('先粘贴订阅链接')
+    const local = await subs.scanLocalMedia(effectiveDownloadDir())
+    let preview
+    let localMap
+    if (/hanime1\.me/i.test(target)) {
+      const proxyUrl = await proxyFor(target)
+      const info = await hanime.listSubscription(target, { proxy: proxyUrl, onProgress: sendSubProgress })
+      preview = {
+        site: 'hanime',
+        type: info.type,
+        mid: '',
+        listId: info.type === 'playlist' ? info.id : '',
+        userId: info.type === 'uploader' ? info.id : '',
+        query: info.type === 'search' ? info.id : '',
+        url: info.url,
+        name: info.name,
+        face: info.face,
+        videos: info.videos
+      }
+      localMap = local.hanime
+    } else if (/bilibili\.com|b23\.tv/i.test(target)) {
+      const list = await bili.listUpVideos(target, sendSubProgress)
+      let profile = { name: '', face: '' }
+      try {
+        profile = await bili.fetchUpProfile(list.mid)
+      } catch (err) {
+        log(`获取 UP 资料失败: ${err.message}`)
+      }
+      preview = {
+        site: 'bilibili',
+        type: 'up',
+        mid: list.mid,
+        listId: '',
+        userId: '',
+        query: '',
+        url: `https://space.bilibili.com/${list.mid}`,
+        name: profile.name || list.author || `UP ${list.mid}`,
+        face: profile.face,
+        videos: list.videos
+      }
+      localMap = local.bilibili
+    } else {
+      throw new Error('只支持 B 站空间链接和 Hanime 链接')
     }
-    const name = profile.name || list.author || `UP ${list.mid}`
+    const rec = normalizeSubscription(Object.assign({}, preview, { filter: 'all', ignored: [] }))
+    const comparison = await buildSubComparison(rec, preview.videos, localMap)
+    const downloaded = comparison.videos.length - comparison.missing
+    log(`搜索订阅: ${preview.site} ${preview.name} 共 ${comparison.videos.length} 个，已下载 ${downloaded}`)
+    return {
+      preview,
+      key: rec.key,
+      exist: !!findSubscription(rec.key),
+      total: comparison.videos.length,
+      downloaded,
+      missing: comparison.missing
+    }
+  })
+
+  // 预览里已经拉过清单，直接落库，不再重复请求
+  ipcMain.handle('subs:addPreview', async (_e, preview) => {
+    if (!preview || !preview.site) throw new Error('预览数据失效，请重新搜索')
+    const videos = Array.isArray(preview.videos) ? preview.videos : []
+    if (!videos.length) throw new Error('这个订阅没有可用的视频')
     const rec = normalizeSubscription({
-      site: 'bilibili',
-      type: 'up',
-      mid: list.mid,
-      name,
-      face: profile.face,
+      site: preview.site,
+      type: preview.type,
+      mid: preview.mid,
+      listId: preview.listId,
+      userId: preview.userId,
+      query: preview.query,
+      url: preview.url,
+      name: preview.name,
+      face: preview.face,
       filter: 'all',
       ignored: [],
-      lastCheckAt: Date.now(),
       addedAt: Date.now()
     })
     const prev = findSubscription(rec.key)
     if (prev) Object.assign(rec, { filter: prev.filter, ignored: prev.ignored, addedAt: prev.addedAt })
     const local = await subs.scanLocalMedia(effectiveDownloadDir())
-    const comparison = await buildSubComparison(rec, list.videos, local.bilibili)
-    medialib.saveVideoList(rec.key, list.videos)
+    const localMap = rec.site === 'hanime' ? local.hanime : local.bilibili
+    const comparison = await buildSubComparison(rec, videos, localMap)
+    medialib.saveVideoList(rec.key, videos)
+    rec.lastCheckAt = Date.now()
     rec.lastCount = comparison.videos.length
-    rec.lastMissing = comparison.missing
+    rec.updates = pendingUpdates(comparison)
+    rec.lastMissing = rec.updates.length
     const saved = upsertSubscription(rec)
-    log(`订阅 UP: mid=${list.mid} name=${name} 共 ${comparison.videos.length} 个，待下载 ${comparison.missing}`)
-    return Object.assign({ subscription: saved }, comparison)
-  })
-
-  ipcMain.handle('subs:addHanime', async (_e, url) => {
-    const proxyUrl = await proxyFor(url)
-    const info = await hanime.listSubscription(url, { proxy: proxyUrl, onProgress: sendSubProgress })
-    const rec = normalizeSubscription({
-      site: 'hanime',
-      type: info.type,
-      listId: info.type === 'playlist' ? info.id : '',
-      userId: info.type === 'uploader' ? info.id : '',
-      query: info.type === 'search' ? info.id : '',
-      url: info.url,
-      name: info.name,
-      face: info.face,
-      filter: 'all',
-      ignored: [],
-      lastCheckAt: Date.now(),
-      addedAt: Date.now()
-    })
-    const prev = findSubscription(rec.key)
-    if (prev) Object.assign(rec, { ignored: prev.ignored, addedAt: prev.addedAt })
-    const local = await subs.scanLocalMedia(effectiveDownloadDir())
-    const comparison = await buildSubComparison(rec, info.videos, local.hanime)
-    medialib.saveVideoList(rec.key, info.videos)
-    rec.lastCount = comparison.videos.length
-    rec.lastMissing = comparison.missing
-    const saved = upsertSubscription(rec)
-    log(`订阅 Hanime: ${info.type}=${info.id} name=${info.name} 共 ${comparison.videos.length} 个，待下载 ${comparison.missing}`)
+    log(`订阅 ${saved.site}: ${saved.key} name=${saved.name} 共 ${comparison.videos.length} 个，待下载 ${saved.lastMissing}`)
     return Object.assign({ subscription: saved }, comparison)
   })
 
@@ -907,18 +915,10 @@ function registerIpc() {
     const sub = findSubscription(key)
     if (!sub) throw new Error('订阅不存在，可能已被删除')
     const local = await subs.scanLocalMedia(effectiveDownloadDir())
-    const r = await listSubscriptionVideos(sub, sendSubProgress, local)
-    medialib.saveVideoList(sub.key, r.videos)
-    const localMap = sub.site === 'hanime' ? local.hanime : local.bilibili
-    const comparison = await buildSubComparison(sub, r.videos, localMap)
-    sub.lastCheckAt = Date.now()
-    // 仅拉取最新时只拿到最新一段，「共 N 个」保留上次的完整数量
-    if (!r.stopped) sub.lastCount = comparison.videos.length
-    sub.lastMissing = comparison.missing
-    if (!sub.name && r.author) sub.name = r.author
+    const result = await refreshSubscription(sub, local)
     saveSubscriptions()
-    log(`检查订阅: ${sub.site}:${sub.key} 共 ${comparison.videos.length} 个，待下载 ${comparison.missing}`)
-    return Object.assign({ subscription: sub }, comparison)
+    log(`检查订阅: ${sub.site}:${sub.key} 共 ${result.videos.length} 个，待下载 ${sub.lastMissing}`)
+    return result
   })
 
   ipcMain.handle('subs:remove', (_e, key) => {
@@ -941,10 +941,13 @@ function registerIpc() {
     for (const id of ids) if (localMap.has(id)) map[id] = localMap.get(id)
     const downloaded = Object.keys(map).length
     if (sub) {
-      sub.lastMissing = ids.length - downloaded
+      // 展开列表里的这一批已经落到本地，直接从待下载清单里去掉
+      const gone = new Set(Object.keys(map))
+      sub.updates = (sub.updates || []).filter((v) => !gone.has(String(v.id)))
+      sub.lastMissing = sub.updates.length
       saveSubscriptions()
     }
-    return { map, subscription: sub || null, downloaded, missing: ids.length - downloaded }
+    return { map, subscription: sub || null, downloaded, missing: sub ? sub.lastMissing : 0 }
   })
 
   ipcMain.handle('subs:settings', (_e, payload) => {
@@ -1012,9 +1015,13 @@ function registerIpc() {
         thumb: String(v.thumb || ''),
         url: String(v.url || ''),
         site: sub.site,
+        charging: !!v.charging,
         ignoredAt: Date.now()
       })
     }
+    const ignoredIds = new Set(sub.ignored.map((v) => String(v.id)))
+    sub.updates = (sub.updates || []).filter((v) => !ignoredIds.has(String(v.id)))
+    sub.lastMissing = sub.updates.length
     saveSubscriptions()
     log(`忽略更新: ${sub.key} +${videos.length}，共 ${sub.ignored.length}`)
     return sub
@@ -1024,13 +1031,30 @@ function registerIpc() {
     const sub = findSubscription(payload && payload.key)
     if (!sub) throw new Error('订阅不存在，可能已被删除')
     const ids = new Set((Array.isArray(payload.ids) ? payload.ids : []).map(String))
+    const back = sub.ignored.filter((v) => ids.has(String(v.id)))
     sub.ignored = sub.ignored.filter((v) => !ids.has(String(v.id)))
+    // 取消忽略的视频回到待下载清单，不重新联网拉清单
+    const have = new Set((sub.updates || []).map((v) => String(v.id)))
+    for (const v of back) {
+      if (have.has(String(v.id))) continue
+      sub.updates.push({
+        id: String(v.id),
+        title: String(v.title || v.id),
+        url: String(v.url || ''),
+        duration: 0,
+        created: Number(v.created) || 0,
+        dateText: String(v.dateText || ''),
+        thumb: String(v.thumb || ''),
+        charging: !!v.charging,
+        subAuthor: ''
+      })
+    }
+    sub.updates.sort((a, b) => (Number(b.created) || 0) - (Number(a.created) || 0))
+    sub.lastMissing = sub.updates.length
     saveSubscriptions()
     log(`移除忽略: ${sub.key} 剩余 ${sub.ignored.length}`)
     return sub
   })
-
-  ipcMain.handle('subs:summary', () => buildUpdateSummary())
 
   ipcMain.handle('ugreen:config', () => ugreen.publicConfig())
 
